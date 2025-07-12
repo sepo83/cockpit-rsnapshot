@@ -3,7 +3,7 @@
   "tools": {
     "rsnapshot": {
       "label": "rsnapshot",
-      "path": "rsnapshot.html",
+      "path": "index.html",
       "icon": "rsnapshot-icon.svg",
       "description": "Verwalte rsnapshot Backups und Konfiguration"
     }

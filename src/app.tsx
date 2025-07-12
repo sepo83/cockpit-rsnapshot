@@ -1,48 +1,65 @@
-/*
- * This file is part of Cockpit.
- *
- * Copyright (C) 2017 Red Hat, Inc.
- *
- * Cockpit is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2.1 of the License, or
- * (at your option) any later version.
- *
- * Cockpit is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
- */
+import React, { useState } from "react";
+import cockpit from "cockpit";
+import "./app.scss";
 
-import React, { useEffect, useState } from 'react';
-import { Alert } from "@patternfly/react-core/dist/esm/components/Alert/index.js";
-import { Card, CardBody, CardTitle } from "@patternfly/react-core/dist/esm/components/Card/index.js";
+const App: React.FC = () => {
+  const [output, setOutput] = useState("");
+  const [config, setConfig] = useState("");
+  const [configLoaded, setConfigLoaded] = useState(false);
 
-import cockpit from 'cockpit';
+  const runBackup = () => {
+    setOutput("Starte rsnapshot-Backup...\n");
+    cockpit.spawn(["sudo", "rsnapshot", "daily"])
+      .stream(data => setOutput(prev => prev + data))
+      .then(() => setOutput(prev => prev + "\nBackup abgeschlossen.\n"))
+      .catch(error => setOutput(prev => prev + "\nFehler beim Backup: " + error + "\n"));
+  };
 
-const _ = cockpit.gettext;
+  const showConfig = () => {
+    setOutput("Lade Konfiguration...\n");
+    cockpit.spawn(["cat", "/etc/rsnapshot.conf"])
+      .then(data => {
+        setConfig(data);
+        setConfigLoaded(true);
+        setOutput("Konfiguration geladen.\n");
+      })
+      .catch(error => setOutput("Fehler beim Laden der Konfiguration: " + error + "\n"));
+  };
 
-export const Application = () => {
-    const [hostname, setHostname] = useState(_("Unknown"));
+  const saveConfig = () => {
+    setOutput("Speichere Konfiguration...\n");
+    cockpit.spawn(["sudo", "./write-config.sh"], { input: config })
+      .then(() => setOutput("Konfiguration gespeichert.\n"))
+      .catch(error => setOutput("Fehler beim Speichern der Konfiguration: " + error + "\n"));
+  };
 
-    useEffect(() => {
-        const hostname = cockpit.file('/etc/hostname');
-        hostname.watch(content => setHostname(content?.trim() ?? ""));
-        return hostname.close;
-    }, []);
+  const showLog = () => {
+    setOutput("Lade Logdatei...\n");
+    cockpit.spawn(["cat", "/var/log/rsnapshot"])
+      .then(data => setOutput(data))
+      .catch(error => setOutput("Fehler beim Laden der Logdatei: " + error + "\n"));
+  };
 
-    return (
-        <Card>
-            <CardTitle>Starter Kit</CardTitle>
-            <CardBody>
-                <Alert
-                    variant="info"
-                    title={ cockpit.format(_("Running on $0"), hostname) }
-                />
-            </CardBody>
-        </Card>
-    );
+  return (
+    <div>
+      <h1>rsnapshot Verwaltung</h1>
+      <div className="button-row">
+        <button className="btn btn-primary" onClick={runBackup}>Backup starten</button>
+        <button className="btn btn-secondary" onClick={showConfig}>Konfiguration anzeigen</button>
+        <button className="btn btn-success" onClick={saveConfig} disabled={!configLoaded}>Konfiguration speichern</button>
+        <button className="btn btn-secondary" onClick={showLog}>Log anzeigen</button>
+      </div>
+      <label><strong>Ausgabe / Log:</strong></label>
+      <pre>{output}</pre>
+      <label><strong>rsnapshot Konfiguration:</strong></label>
+      <textarea
+        style={{ width: "100%", minHeight: "200px", fontFamily: "monospace" }}
+        value={config}
+        onChange={e => setConfig(e.target.value)}
+        placeholder="Hier erscheint die rsnapshot.conf"
+      />
+    </div>
+  );
 };
+
+export default App;

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="addon">
+  <id>org.cockpit_project.rnsapshot</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <name>rsnapshot</name>
+  <summary>Rsnapshot plugin for cockpit</summary>
+  <description>
+    <p>
+      Rsnapshot plugin for cockpit
+    </p>
+  </description>
+  <extends>org.cockpit_project.cockpit</extends>
+  <launchable type="cockpit-manifest">rsnapshot</launchable>
+  <url type="homepage">https://github.com/sepo83/cockpit-rsnapshot</url>
+  <url type="bugtracker">https://github.com/sepo83/cockpit-rsnapshot/issues</url>
+  <update_contact>cockpit-devel_AT_lists.fedorahosted.org</update_contact>
+  <developer id="org.cockpit-project">
+    <name>Cockpit Project</name>
+  </developer>
+</component>
