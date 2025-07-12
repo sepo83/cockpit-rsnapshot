@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>rsnapshot Verwaltung</title>
+    <link rel="stylesheet" href="cockpit.css">
+    <style>
+        body { margin: 2em; font-family: sans-serif; }
+        h1 { margin-bottom: 1em; }
+        textarea { width: 100%; min-height: 200px; margin-top: 1em; font-family: monospace; }
+        pre { background: #f8f8f8; padding: 1em; border: 1px solid #ccc; min-height: 100px; }
+        .button-row { margin-bottom: 1em; }
+        button { margin-right: 1em; }
+    </style>
+</head>
+<body>
+    <h1>rsnapshot Verwaltung</h1>
+
+    <div class="button-row">
+        <button id="run-backup" class="btn btn-primary">Backup starten</button>
+        <button id="show-config" class="btn btn-secondary">Konfiguration anzeigen</button>
+        <button id="save-config" class="btn btn-success">Konfiguration speichern</button>
+        <button id="show-log" class="btn btn-secondary">Log anzeigen</button>
+    </div>
+
+    <label for="output"><strong>Ausgabe / Log:</strong></label>
+    <pre id="output"></pre>
+
+    <label for="config-editor"><strong>rsnapshot Konfiguration:</strong></label>
+    <textarea id="config-editor" placeholder="Hier erscheint die rsnapshot.conf"></textarea>
+
+    <script src="rsnapshot.js"></script>
+</body>
+</html>
