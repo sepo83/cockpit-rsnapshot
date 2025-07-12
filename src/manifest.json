@@ -1,11 +1,11 @@
 {
-    "requires": {
-        "cockpit": "137"
-    },
-
-    "tools": {
-        "index": {
-            "label": "Starter Kit"
-        }
+  "version": 0,
+  "tools": {
+    "rsnapshot": {
+      "label": "rsnapshot",
+      "path": "rsnapshot.html",
+      "icon": "rsnapshot-icon.svg",
+      "description": "Verwalte rsnapshot Backups und Konfiguration"
     }
+  }
 }
