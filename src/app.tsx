@@ -4,7 +4,8 @@ import parser from "cron-parser";
 import cockpit from "cockpit";
 import {
   Page, PageSection, Title, Button, TextArea, Alert, AlertGroup, Stack, StackItem,
-  Toolbar, ToolbarContent, ToolbarItem, Form, FormGroup, TextInput, Tooltip, Spinner, Switch, FormHelperText, Badge
+  Toolbar, ToolbarContent, ToolbarItem, Form, FormGroup, TextInput, Tooltip, Spinner, Switch, FormHelperText, Badge,
+  FormSelect, FormSelectOption
 } from "@patternfly/react-core";
 import {
   Table, Thead, Tbody, Tr, Th, Td
@@ -61,22 +62,25 @@ function parseConfig(conf: string) {
   };
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed.startsWith("snapshot_root")) result.snapshot_root = trimmed.split(/\s+/)[1] || "";
-    else if (trimmed.startsWith("logfile")) result.logfile = trimmed.split(/\s+/)[1] || "";
-    else if (trimmed.startsWith("verbose")) result.verbose = trimmed.split(/\s+/)[1] || "";
-    else if (/^(retain|interval)\s+/.test(trimmed)) {
-      const [, name, count] = trimmed.split(/\s+/);
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const commentIdx = trimmed.indexOf("#");
+    const cleanLine = commentIdx >= 0 ? trimmed.slice(0, commentIdx).trim() : trimmed;
+    if (cleanLine.startsWith("snapshot_root")) result.snapshot_root = cleanLine.split(/\s+/)[1] || "";
+    else if (cleanLine.startsWith("logfile")) result.logfile = cleanLine.split(/\s+/)[1] || "";
+    else if (cleanLine.startsWith("verbose")) result.verbose = cleanLine.split(/\s+/)[1] || "";
+    else if (/^(retain|interval)\s+/.test(cleanLine)) {
+      const [, name, count] = cleanLine.split(/\s+/);
       if (INTERVALS.includes(name as IntervalName)) {
         result.intervals[name as IntervalName] = count;
       }
-    } else if (trimmed.startsWith("backup")) {
-      const [, source, dest, ...opts] = trimmed.split(/\s+/);
+    } else if (cleanLine.startsWith("backup")) {
+      const [, source, dest, ...opts] = cleanLine.split(/\s+/);
       result.backups.push({ source, dest, options: opts.join(" ") });
-    } else if (trimmed.startsWith("exclude")) {
-      result.excludes.push(trimmed.replace(/^exclude\s+/, ""));
-    } else if (trimmed.startsWith("exclude_file")) {
-      result.excludes.push("file:" + trimmed.replace(/^exclude_file\s+/, ""));
-    } else if (trimmed && !trimmed.startsWith("#")) {
+    } else if (cleanLine.startsWith("exclude")) {
+      result.excludes.push(cleanLine.replace(/^exclude\s+/, ""));
+    } else if (cleanLine.startsWith("exclude_file")) {
+      result.excludes.push("file:" + cleanLine.replace(/^exclude_file\s+/, ""));
+    } else if (cleanLine) {
       result.rest.push(line);
     }
   }
@@ -116,6 +120,8 @@ function serializeCronFile(intervalRows: IntervalRow[]) {
 }
 
 function isValidCronSyntax(s: string): boolean {
+  const shortcuts = ["@reboot", "@yearly", "@annually", "@monthly", "@weekly", "@daily", "@hourly"];
+  if (shortcuts.includes(s.trim())) return true;
   return /^([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)$/.test(s.trim());
 }
 
@@ -139,7 +145,19 @@ function extractActiveCronJobs(cron: string): string[] {
 
 function getNextCronRun(cron: string): string {
   try {
-    const interval = parser.parseExpression(cron, {
+    // Shortcuts wie @daily etc.
+    const shortcutMap: Record<string, string> = {
+      "@hourly": "0 * * * *",
+      "@daily": "0 0 * * *",
+      "@weekly": "0 0 * * 0",
+      "@monthly": "0 0 1 * *",
+      "@yearly": "0 0 1 1 *",
+      "@annually": "0 0 1 1 *",
+      "@reboot": "", // Nicht berechenbar
+    };
+    const cronExpr = shortcutMap[cron.trim()] || cron;
+    if (!cronExpr) return "Wird beim Systemstart ausgeführt";
+    const interval = parser.parseExpression(cronExpr, {
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone
     });
     const next = interval.next();
@@ -149,8 +167,17 @@ function getNextCronRun(cron: string): string {
   }
 }
 
+function hasSudoRights(): Promise<boolean> {
+  return cockpit.spawn(["sudo", "-n", "true"]).then(() => true).catch(() => false);
+}
+
+function isValidBackupJob(b: BackupJob): boolean {
+  return !!b.source && !!b.dest && b.source.trim() !== "" && b.dest.trim() !== "";
+}
+
 const App: React.FC = () => {
   const [rsnapshotAvailable, setRsnapshotAvailable] = useState<boolean | null>(null);
+  const [sudoAvailable, setSudoAvailable] = useState<boolean | null>(null);
   const [output, setOutput] = useState("");
   const [alerts, setAlerts] = useState<{title: string, variant: 'success'|'danger'|'warning'}[]>([]);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
@@ -178,10 +205,14 @@ const App: React.FC = () => {
 
   const [cronPreview, setCronPreview] = useState<{[key: number]: string}>({});
 
+  // Backup-Intervall-Auswahl
+  const [backupInterval, setBackupInterval] = useState<IntervalName>("daily");
+
   useEffect(() => {
     cockpit.spawn(["which", "rsnapshot"])
       .then(() => setRsnapshotAvailable(true))
       .catch(() => setRsnapshotAvailable(false));
+    hasSudoRights().then(setSudoAvailable);
     loadAll();
     // eslint-disable-next-line
   }, []);
@@ -201,7 +232,7 @@ const App: React.FC = () => {
           setSnapshotRoot(parsed.snapshot_root);
           setLogfile(parsed.logfile);
           setVerbose(parsed.verbose);
-          setBackups(parsed.backups.filter(b => b.source && b.dest));
+          setBackups(parsed.backups.filter(isValidBackupJob));
           setExcludes(parsed.excludes.filter(e => e));
           setRest(parsed.rest);
           setIntervalRows(rows => INTERVALS.map((name, idx) => ({
@@ -282,7 +313,7 @@ const App: React.FC = () => {
       logfile,
       verbose,
       intervals: {},
-      backups: backups.filter(b => b.source && b.dest),
+      backups: backups.filter(isValidBackupJob),
       excludes: excludes.filter(e => e),
       rest
     };
@@ -377,7 +408,7 @@ const App: React.FC = () => {
     if (field === "cronSyntax") {
       setCronErrors(errors => ({
         ...errors,
-        [idx]: isValidCronSyntax(value) ? undefined : "Ungültige Cron-Syntax (z.B. 0 * * * *)"
+        [idx]: isValidCronSyntax(value) ? undefined : "Ungültige Cron-Syntax (z.B. 0 * * * * oder @daily)"
       }));
     }
     if (field === "count") {
@@ -425,6 +456,17 @@ const App: React.FC = () => {
     loadLastBackup();
   }, [snapshotRoot, loadLastBackup]);
 
+  // Tooltip für Cron-Syntax
+  const cronTooltip = (
+    <span>
+      Ungültige Cron-Syntax.<br />
+      Beispiele:<br />
+      <code>0 * * * *</code> (jede Stunde)<br />
+      <code>30 3 * * *</code> (täglich 3:30 Uhr)<br />
+      <code>@daily</code>, <code>@hourly</code>
+    </span>
+  );
+
   return (
     <Page>
       <PageSection>
@@ -448,16 +490,33 @@ const App: React.FC = () => {
             <code>sudo zypper install rsnapshot</code> (openSUSE)
           </Alert>
         )}
+        {sudoAvailable === false && (
+          <Alert title="Keine sudo-Rechte" variant="danger" isInline>
+            Sie haben keine sudo-Rechte oder Ihr Cockpit-Session-User darf keine Systemdateien ändern.<br />
+            Bitte führen Sie Cockpit als Administrator aus.
+          </Alert>
+        )}
         <Toolbar>
           <ToolbarContent>
             <ToolbarItem>
+              <FormSelect
+                value={backupInterval}
+                onChange={v => setBackupInterval(v as IntervalName)}
+                aria-label="Backup-Intervall auswählen"
+              >
+                {INTERVALS.map(i => (
+                  <FormSelectOption key={i} value={i} label={i} />
+                ))}
+              </FormSelect>
+            </ToolbarItem>
+            <ToolbarItem>
               <Button variant="primary" onClick={() => {
-                setOutput("Starte rsnapshot-Backup...\n");
-                cockpit.spawn(["sudo", "rsnapshot", "daily"])
+                setOutput(`Starte rsnapshot-Backup (${backupInterval})...\n`);
+                cockpit.spawn(["sudo", "rsnapshot", backupInterval])
                   .stream(data => setOutput(prev => prev + data))
                   .then(() => setOutput(prev => prev + "\nBackup abgeschlossen.\n"))
                   .catch(error => setOutput(prev => prev + "\nFehler beim Backup: " + (error?.message || JSON.stringify(error)) + "\n"));
-              }} isDisabled={!rsnapshotAvailable}>Backup starten</Button>
+              }} isDisabled={!rsnapshotAvailable || !sudoAvailable}>Backup starten</Button>
             </ToolbarItem>
             <ToolbarItem>
               <Button variant="secondary" onClick={() => {
@@ -514,7 +573,13 @@ const App: React.FC = () => {
                   />
                   <Tooltip content="Verzeichnis im Terminal anzeigen">
                     <Button variant="plain" aria-label="Öffnen"
-                      onClick={() => cockpit.spawn(["xdg-open", snapshotRoot])}>
+                      onClick={() => {
+                        cockpit.spawn(["xdg-open", snapshotRoot])
+                          .catch(() => setAlerts(alerts => [
+                            ...alerts,
+                            { title: "Konnte Verzeichnis nicht öffnen (kein grafisches System?)", variant: "warning" }
+                          ]));
+                      }}>
                       <SearchIcon />
                     </Button>
                   </Tooltip>
@@ -593,17 +658,14 @@ const App: React.FC = () => {
                           )}
                         </Td>
                         <Td>
-                          <TextInput
-                            value={row.cronSyntax}
-                            onChange={(_, v) => handleIntervalRow(idx, "cronSyntax", v)}
-                            aria-label="Cron-Syntax"
-                            validated={cronErrors[idx] ? "error" : "default"}
-                          />
-                          {cronErrors[idx] && (
-                            <FormHelperText className="pf-m-error" style={{color: "#c9190b"}}>
-                              {cronErrors[idx]}
-                            </FormHelperText>
-                          )}
+                          <Tooltip content={cronErrors[idx] ? cronTooltip : undefined}>
+                            <TextInput
+                              value={row.cronSyntax}
+                              onChange={(_, v) => handleIntervalRow(idx, "cronSyntax", v)}
+                              aria-label="Cron-Syntax"
+                              validated={cronErrors[idx] ? "error" : "default"}
+                            />
+                          </Tooltip>
                           {cronPreview[idx] && (
                             <div style={{fontSize: "0.9em", color: "#555", marginTop: 4}}>{cronPreview[idx]}</div>
                           )}
