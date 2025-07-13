@@ -17,10 +17,13 @@ import {
   Form,
   FormGroup,
   Switch,
-  TextInput
+  TextInput,
+  FormHelperText,
+  Tooltip,
+  Spinner
 } from "@patternfly/react-core";
+import { SyncAltIcon, InfoCircleIcon } from '@patternfly/react-icons';
 import "./app.scss";
-
 
 type CronSettings = {
   hourly: boolean;
@@ -45,27 +48,69 @@ const defaultCronSettings: CronSettings = {
 };
 
 const CRON_PATH = "/etc/cron.d/rsnapshot";
+const CONF_PATH = "/etc/rsnapshot.conf";
+
+// Cron-Syntax-Validierung (einfach, prüft auf 5 Felder)
+function isValidCronSyntax(s: string): boolean {
+  // Hinweis: Unterstützt KEINE @reboot, @hourly etc.
+  return /^([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)$/.test(s.trim());
+}
+
+// Extrahiert alle "retain" oder "interval" Namen aus der Konfiguration
+function extractIntervals(conf: string): string[] {
+  const intervals: string[] = [];
+  const regex = /^\s*(interval|retain)\s+([a-zA-Z0-9_-]+)\s+\d+/gm;
+  let match;
+  while ((match = regex.exec(conf)) !== null) {
+    intervals.push(match[2]);
+  }
+  return intervals;
+}
 
 const App: React.FC = () => {
   const [rsnapshotAvailable, setRsnapshotAvailable] = useState<boolean | null>(null);
   const [output, setOutput] = useState("");
   const [config, setConfig] = useState("");
   const [configLoaded, setConfigLoaded] = useState(false);
-  const [alerts, setAlerts] = useState<{title: string, variant: 'success'|'danger'}[]>([]);
+  const [alerts, setAlerts] = useState<{title: string, variant: 'success'|'danger'|'warning'}[]>([]);
   const [configSaved, setConfigSaved] = useState(false);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
 
   // Cron
   const [cronSettings, setCronSettings] = useState<CronSettings>(defaultCronSettings);
   const [cronLoaded, setCronLoaded] = useState(false);
   const [cronSaved, setCronSaved] = useState(false);
+  const [isSavingCron, setIsSavingCron] = useState(false);
   const [cronFileContent, setCronFileContent] = useState<string>("");
 
+  // Fehlerstatus für Cron-Zeitfelder
+  const [cronErrors, setCronErrors] = useState<{
+    hourlyTime?: string;
+    dailyTime?: string;
+    weeklyTime?: string;
+    monthlyTime?: string;
+  }>({});
+
+  // Für die Prüfung: Sind alle aktivierten Cronjobs auch in der Konfiguration vorhanden?
+  const [confIntervals, setConfIntervals] = useState<string[]>([]);
+  const [cronConfMismatch, setCronConfMismatch] = useState<string[]>([]);
+
+  // === Initial-Laden ===
   useEffect(() => {
     cockpit.spawn(["which", "rsnapshot"])
       .then(() => setRsnapshotAvailable(true))
       .catch(() => setRsnapshotAvailable(false));
     loadCron();
+    loadConfig();
   }, []);
+
+  // === Prüfung, ob Cronjobs und Konfiguration zusammenpassen ===
+  useEffect(() => {
+    checkCronConfigMatch();
+    // eslint-disable-next-line
+  }, [cronSettings, confIntervals]);
+
+  // === Funktionen ===
 
   const runBackup = () => {
     if (!rsnapshotAvailable) return;
@@ -77,40 +122,51 @@ const App: React.FC = () => {
         setAlerts(alerts => [...alerts, {title: "Backup abgeschlossen", variant: "success"}]);
       })
       .catch(error => {
-        setOutput(prev => prev + "\nFehler beim Backup: " + error + "\n");
-        setAlerts(alerts => [...alerts, {title: "Fehler beim Backup", variant: "danger"}]);
+        setOutput(prev => prev + "\nFehler beim Backup: " + (error?.message || JSON.stringify(error)) + "\n");
+        setAlerts(alerts => [...alerts, {title: "Fehler beim Backup: " + (error?.message || JSON.stringify(error)), variant: "danger"}]);
       });
   };
 
-  const showConfig = () => {
+  const loadConfig = () => {
     if (!rsnapshotAvailable) return;
     setOutput("Lade Konfiguration...\n");
-    cockpit.spawn(["cat", "/etc/rsnapshot.conf"])
+    cockpit.spawn(["cat", CONF_PATH])
       .then(data => {
         setConfig(data);
         setConfigLoaded(true);
         setOutput("Konfiguration geladen.\n");
+        setConfIntervals(extractIntervals(data));
       })
       .catch(error => {
-        setOutput("Fehler beim Laden der Konfiguration: " + error + "\n");
-        setAlerts(alerts => [...alerts, {title: "Fehler beim Laden der Konfiguration", variant: "danger"}]);
+        setOutput("Fehler beim Laden der Konfiguration: " + (error?.message || JSON.stringify(error)) + "\n");
+        setAlerts(alerts => [
+          ...alerts,
+          {title: "Fehler beim Laden der Konfiguration: " + (error?.message || JSON.stringify(error)), variant: "danger"}
+        ]);
+        setConfIntervals([]);
       });
   };
 
   const saveConfig = () => {
     if (!rsnapshotAvailable) return;
+    setIsSavingConfig(true);
     setOutput("Speichere Konfiguration...\n");
-    cockpit.file("/etc/rsnapshot.conf", { superuser: "require" }).replace(config)
+    cockpit.file(CONF_PATH, { superuser: "require" }).replace(config)
       .then(() => {
         setOutput("Konfiguration gespeichert.\n");
         setAlerts(alerts => [...alerts, {title: "Konfiguration gespeichert", variant: "success"}]);
         setConfigSaved(true);
         setTimeout(() => setConfigSaved(false), 5000);
+        loadConfig();
       })
       .catch(error => {
-        setOutput("Fehler beim Speichern der Konfiguration: " + error + "\n");
-        setAlerts(alerts => [...alerts, {title: "Fehler beim Speichern der Konfiguration", variant: "danger"}]);
-      });
+        setOutput("Fehler beim Speichern der Konfiguration: " + (error?.message || JSON.stringify(error)) + "\n");
+        setAlerts(alerts => [
+          ...alerts,
+          {title: "Fehler beim Speichern der Konfiguration: " + (error?.message || JSON.stringify(error)), variant: "danger"}
+        ]);
+      })
+      .finally(() => setIsSavingConfig(false));
   };
 
   const showLog = () => {
@@ -118,11 +174,15 @@ const App: React.FC = () => {
     setOutput("Lade Logdatei...\n");
     cockpit.spawn(["test", "-f", "/var/log/rsnapshot.log"])
       .then(() => {
-        cockpit.spawn(["cat", "/var/log/rsnapshot.log"])
+        // Zeige nur die letzten 100 Zeilen für Performance
+        cockpit.spawn(["tail", "-n", "100", "/var/log/rsnapshot.log"])
           .then(data => setOutput(data))
           .catch(error => {
-            setOutput("Fehler beim Laden der Logdatei: " + error + "\n");
-            setAlerts(alerts => [...alerts, {title: "Fehler beim Laden der Logdatei", variant: "danger"}]);
+            setOutput("Fehler beim Laden der Logdatei: " + (error?.message || JSON.stringify(error)) + "\n");
+            setAlerts(alerts => [
+              ...alerts,
+              {title: "Fehler beim Laden der Logdatei: " + (error?.message || JSON.stringify(error)), variant: "danger"}
+            ]);
           });
       })
       .catch(() => {
@@ -138,13 +198,11 @@ const App: React.FC = () => {
       .then(data => {
         const settings = { ...defaultCronSettings };
         const lines = data.split("\n");
-        // Flags für Aktivierung
         settings.hourly = false;
         settings.daily = false;
         settings.weekly = false;
         settings.monthly = false;
         for (const line of lines) {
-          // Prüfe, ob die Zeile auskommentiert ist (egal wie viele Leerzeichen davor)
           if (/^\s*#/.test(line)) continue;
           const trimmed = line.trim();
           if (trimmed.includes("rsnapshot hourly")) {
@@ -167,15 +225,18 @@ const App: React.FC = () => {
         setCronSettings(settings);
         setCronLoaded(true);
         setCronFileContent(data);
+        setCronErrors({});
       })
       .catch(() => {
         setCronSettings(defaultCronSettings);
         setCronLoaded(true);
         setCronFileContent("");
+        setCronErrors({});
       });
   };
 
   const saveCron = () => {
+    setIsSavingCron(true);
     let cron = "# Managed by Cockpit rsnapshot Plugin\n";
     if (cronSettings.hourly) {
       cron += `${cronSettings.hourlyTime} root /usr/bin/rsnapshot hourly\n`;
@@ -203,20 +264,80 @@ const App: React.FC = () => {
         setAlerts(alerts => [...alerts, {title: "Cronjobs gespeichert", variant: "success"}]);
         setCronSaved(true);
         setTimeout(() => setCronSaved(false), 5000);
-        loadCron(); // Synchronisiere UI nach Speichern
+        loadCron();
       })
       .catch(error => {
-        setAlerts(alerts => [...alerts, {title: "Fehler beim Speichern der Cronjobs: " + error, variant: "danger"}]);
-      });
+        setAlerts(alerts => [
+          ...alerts,
+          {title: "Fehler beim Speichern der Cronjobs: " + (error?.message || JSON.stringify(error)), variant: "danger"}
+        ]);
+      })
+      .finally(() => setIsSavingCron(false));
   };
 
-  // Funktionale Variante!
+  // Switch-Handler für Cron-Intervalle (Checkboxen)
+  const handleCronSwitch = (field: keyof CronSettings) => {
+    setCronSettings(prev => {
+      const updated = { ...prev, [field]: !prev[field] };
+      // Fehler für das Zeitfeld zurücksetzen, wenn Intervall deaktiviert wird
+      if (!updated[field]) {
+        let errorField: keyof typeof cronErrors | undefined;
+        switch (field) {
+          case "hourly": errorField = "hourlyTime"; break;
+          case "daily": errorField = "dailyTime"; break;
+          case "weekly": errorField = "weeklyTime"; break;
+          case "monthly": errorField = "monthlyTime"; break;
+          default: errorField = undefined;
+        }
+        if (errorField) {
+          setCronErrors(prevErrors => ({ ...prevErrors, [errorField]: undefined }));
+        }
+      }
+      return updated;
+    });
+  };
+
+  // Handler für Zeitfeld-Änderung
   const handleCronChange = (field: keyof CronSettings, value: any) => {
     setCronSettings(prev => ({ ...prev, [field]: value }));
+
+    // Validierung nur für Zeitfelder
+    if (
+      field === "hourlyTime" ||
+      field === "dailyTime" ||
+      field === "weeklyTime" ||
+      field === "monthlyTime"
+    ) {
+      const isValid = isValidCronSyntax(value);
+      setCronErrors(prev => ({
+        ...prev,
+        [field]: isValid ? undefined : "Ungültige Cron-Syntax (5 Felder, z.B. 0 * * * *)"
+      }));
+    }
   };
 
+  // Button deaktivieren, wenn ein Fehler in einem aktivierten Zeitfeld vorliegt
+  const cronHasErrors = (
+    (cronSettings.hourly && !!cronErrors.hourlyTime) ||
+    (cronSettings.daily && !!cronErrors.dailyTime) ||
+    (cronSettings.weekly && !!cronErrors.weeklyTime) ||
+    (cronSettings.monthly && !!cronErrors.monthlyTime)
+  );
+
+  // === Prüfung: Cronjobs vs. Konfiguration ===
+  function checkCronConfigMatch() {
+    const missing: string[] = [];
+    if (cronSettings.hourly && !confIntervals.includes("hourly")) missing.push("hourly");
+    if (cronSettings.daily && !confIntervals.includes("daily")) missing.push("daily");
+    if (cronSettings.weekly && !confIntervals.includes("weekly")) missing.push("weekly");
+    if (cronSettings.monthly && !confIntervals.includes("monthly")) missing.push("monthly");
+    setCronConfMismatch(missing);
+  }
+
+  // === RENDER ===
+
   return (
-    <Page className="no-masthead-sidebar">
+    <Page>
       <PageSection>
         <Title headingLevel="h1" size="lg">rsnapshot Verwaltung</Title>
         <AlertGroup isToast>
@@ -224,16 +345,6 @@ const App: React.FC = () => {
             <Alert key={idx} title={alert.title} variant={alert.variant} timeout={5000} />
           ))}
         </AlertGroup>
-        {configSaved && (
-          <Alert title="Konfiguration erfolgreich gespeichert" variant="success" isInline>
-            Die Datei <code>/etc/rsnapshot.conf</code> wurde erfolgreich gespeichert.
-          </Alert>
-        )}
-        {cronSaved && (
-          <Alert title="Cronjobs erfolgreich gespeichert" variant="success" isInline>
-            Die Datei <code>{CRON_PATH}</code> wurde erfolgreich gespeichert.
-          </Alert>
-        )}
         {rsnapshotAvailable === false && (
           <Alert title="rsnapshot ist nicht installiert" variant="danger" isInline>
             Das Programm <strong>rsnapshot</strong> ist auf diesem System nicht installiert.<br />
@@ -249,10 +360,13 @@ const App: React.FC = () => {
               <Button variant="primary" onClick={runBackup} isDisabled={!rsnapshotAvailable}>Backup starten</Button>
             </ToolbarItem>
             <ToolbarItem>
-              <Button variant="secondary" onClick={showConfig} isDisabled={!rsnapshotAvailable}>Konfiguration anzeigen</Button>
-            </ToolbarItem>
-            <ToolbarItem>
-              <Button variant="primary" onClick={saveConfig} isDisabled={!configLoaded || !rsnapshotAvailable}>Konfiguration speichern</Button>
+              <Button
+                variant="primary"
+                onClick={saveConfig}
+                isDisabled={!configLoaded || !rsnapshotAvailable || isSavingConfig}
+              >
+                {isSavingConfig ? <Spinner size="sm" /> : "Konfiguration speichern"}
+              </Button>
             </ToolbarItem>
             <ToolbarItem>
               <Button variant="secondary" onClick={showLog} isDisabled={!rsnapshotAvailable}>Log anzeigen</Button>
@@ -261,11 +375,12 @@ const App: React.FC = () => {
         </Toolbar>
         <Stack hasGutter>
           <StackItem>
-            <strong>Ausgabe / Log:</strong>
-            <pre style={{background: "#f8f8f8", padding: "1em", border: "1px solid #ccc", minHeight: "100px"}}>{output}</pre>
-          </StackItem>
-          <StackItem>
-            <strong>rsnapshot Konfiguration:</strong>
+            <div className="conf-header">
+              <strong>rsnapshot Konfiguration:</strong>
+              <Tooltip content="Konfiguration neu laden">
+                <SyncAltIcon className="conf-reload" onClick={loadConfig} />
+              </Tooltip>
+            </div>
             <TextArea
               value={config}
               onChange={(_event, value) => setConfig(value)}
@@ -277,85 +392,181 @@ const App: React.FC = () => {
           </StackItem>
           <StackItem>
             <Title headingLevel="h2" size="md">Automatische Backups (Cronjobs)</Title>
+            {cronConfMismatch.length > 0 && (
+              <Alert
+                title="Achtung: Cronjobs und rsnapshot-Konfiguration passen nicht zusammen"
+                variant="warning"
+                isInline
+              >
+                Die folgenden Cronjobs sind aktiviert, aber in der <code>rsnapshot.conf</code> fehlt das entsprechende <code>interval</code> bzw. <code>retain</code>:
+                <ul>
+                  {cronConfMismatch.map(name => (
+                    <li key={name}><code>{name}</code></li>
+                  ))}
+                </ul>
+                Bitte ergänzen Sie die fehlenden Intervalle in der Konfiguration, damit die Backups funktionieren!
+              </Alert>
+            )}
             <Form>
-              <FormGroup label="Stündlich (hourly)" fieldId="cron-hourly">
-                <Switch
-                  id="cron-hourly"
-                  aria-label="Stündlich (hourly)"
-                  isChecked={cronSettings.hourly}
-                  onChange={checked => handleCronChange("hourly", checked)}
-                />
-                <TextInput
-                  value={cronSettings.hourlyTime}
-                  type="text"
-                  onChange={(_event, value) => handleCronChange("hourlyTime", value)}
-                  aria-label="Stündlich Zeit"
-                  isDisabled={!cronSettings.hourly}
-                  style={{width: "200px", marginLeft: "1em"}}
-                />
-                <span style={{marginLeft: "1em"}}>Cron-Syntax (z.B. <code>0 * * * *</code>)</span>
+              {/* HOURLY */}
+              <FormGroup
+                fieldId="cron-hourly"
+                validated={cronErrors.hourlyTime && cronSettings.hourly ? "error" : "default"}
+              >
+                <div style={{ display: "flex", alignItems: "center" }}>
+                  <Switch
+                    id="cron-hourly"
+                    aria-label="Stündlich (hourly)"
+                    isChecked={cronSettings.hourly}
+                    onChange={() => handleCronSwitch("hourly")}
+                  />
+                  <label className="cron-label" htmlFor="cron-hourly-time">Stündlich (hourly)</label>
+                  <TextInput
+                    id="cron-hourly-time"
+                    value={cronSettings.hourlyTime}
+                    type="text"
+                    onChange={(_event, value) => handleCronChange("hourlyTime", value)}
+                    aria-label="Stündlich Zeit"
+                    isDisabled={!cronSettings.hourly}
+                    style={{width: "200px", marginLeft: "1em"}}
+                    validated={cronErrors.hourlyTime && cronSettings.hourly ? "error" : "default"}
+                  />
+                  <Tooltip content="Cron-Syntax (z.B. 0 * * * *)">
+                    <InfoCircleIcon style={{marginLeft: "0.5em", color: "#888", cursor: "pointer"}} />
+                  </Tooltip>
+                </div>
+                {cronErrors.hourlyTime && cronSettings.hourly && (
+                  <FormHelperText isError>{cronErrors.hourlyTime}</FormHelperText>
+                )}
               </FormGroup>
-              <FormGroup label="Täglich (daily)" fieldId="cron-daily">
-                <Switch
-                  id="cron-daily"
-                  aria-label="Täglich (daily)"
-                  isChecked={cronSettings.daily}
-                  onChange={checked => handleCronChange("daily", checked)}
-                />
-                <TextInput
-                  value={cronSettings.dailyTime}
-                  type="text"
-                  onChange={(_event, value) => handleCronChange("dailyTime", value)}
-                  aria-label="Täglich Zeit"
-                  isDisabled={!cronSettings.daily}
-                  style={{width: "200px", marginLeft: "1em"}}
-                />
-                <span style={{marginLeft: "1em"}}>Cron-Syntax (z.B. <code>30 3 * * *</code>)</span>
+              {/* DAILY */}
+              <FormGroup
+                fieldId="cron-daily"
+                validated={cronErrors.dailyTime && cronSettings.daily ? "error" : "default"}
+              >
+                <div style={{ display: "flex", alignItems: "center" }}>
+                  <Switch
+                    id="cron-daily"
+                    aria-label="Täglich (daily)"
+                    isChecked={cronSettings.daily}
+                    onChange={() => handleCronSwitch("daily")}
+                  />
+                  <label className="cron-label" htmlFor="cron-daily-time">Täglich (daily)</label>
+                  <TextInput
+                    id="cron-daily-time"
+                    value={cronSettings.dailyTime}
+                    type="text"
+                    onChange={(_event, value) => handleCronChange("dailyTime", value)}
+                    aria-label="Täglich Zeit"
+                    isDisabled={!cronSettings.daily}
+                    style={{width: "200px", marginLeft: "1em"}}
+                    validated={cronErrors.dailyTime && cronSettings.daily ? "error" : "default"}
+                  />
+                  <Tooltip content="Cron-Syntax (z.B. 30 3 * * *)">
+                    <InfoCircleIcon style={{marginLeft: "0.5em", color: "#888", cursor: "pointer"}} />
+                  </Tooltip>
+                </div>
+                {cronErrors.dailyTime && cronSettings.daily && (
+                  <FormHelperText isError>{cronErrors.dailyTime}</FormHelperText>
+                )}
               </FormGroup>
-              <FormGroup label="Wöchentlich (weekly)" fieldId="cron-weekly">
-                <Switch
-                  id="cron-weekly"
-                  aria-label="Wöchentlich (weekly)"
-                  isChecked={cronSettings.weekly}
-                  onChange={checked => handleCronChange("weekly", checked)}
-                />
-                <TextInput
-                  value={cronSettings.weeklyTime}
-                  type="text"
-                  onChange={(_event, value) => handleCronChange("weeklyTime", value)}
-                  aria-label="Wöchentlich Zeit"
-                  isDisabled={!cronSettings.weekly}
-                  style={{width: "200px", marginLeft: "1em"}}
-                />
-                <span style={{marginLeft: "1em"}}>Cron-Syntax (z.B. <code>0 3 * * 1</code>)</span>
+              {/* WEEKLY */}
+              <FormGroup
+                fieldId="cron-weekly"
+                validated={cronErrors.weeklyTime && cronSettings.weekly ? "error" : "default"}
+              >
+                <div style={{ display: "flex", alignItems: "center" }}>
+                  <Switch
+                    id="cron-weekly"
+                    aria-label="Wöchentlich (weekly)"
+                    isChecked={cronSettings.weekly}
+                    onChange={() => handleCronSwitch("weekly")}
+                  />
+                  <label className="cron-label" htmlFor="cron-weekly-time">Wöchentlich (weekly)</label>
+                  <TextInput
+                    id="cron-weekly-time"
+                    value={cronSettings.weeklyTime}
+                    type="text"
+                    onChange={(_event, value) => handleCronChange("weeklyTime", value)}
+                    aria-label="Wöchentlich Zeit"
+                    isDisabled={!cronSettings.weekly}
+                    style={{width: "200px", marginLeft: "1em"}}
+                    validated={cronErrors.weeklyTime && cronSettings.weekly ? "error" : "default"}
+                  />
+                  <Tooltip content="Cron-Syntax (z.B. 0 3 * * 1)">
+                    <InfoCircleIcon style={{marginLeft: "0.5em", color: "#888", cursor: "pointer"}} />
+                  </Tooltip>
+                </div>
+                {cronErrors.weeklyTime && cronSettings.weekly && (
+                  <FormHelperText isError>{cronErrors.weeklyTime}</FormHelperText>
+                )}
               </FormGroup>
-              <FormGroup label="Monatlich (monthly)" fieldId="cron-monthly">
-                <Switch
-                  id="cron-monthly"
-                  aria-label="Monatlich (monthly)"
-                  isChecked={cronSettings.monthly}
-                  onChange={checked => handleCronChange("monthly", checked)}
-                />
-                <TextInput
-                  value={cronSettings.monthlyTime}
-                  type="text"
-                  onChange={(_event, value) => handleCronChange("monthlyTime", value)}
-                  aria-label="Monatlich Zeit"
-                  isDisabled={!cronSettings.monthly}
-                  style={{width: "200px", marginLeft: "1em"}}
-                />
-                <span style={{marginLeft: "1em"}}>Cron-Syntax (z.B. <code>30 2 1 * *</code>)</span>
+              {/* MONTHLY */}
+              <FormGroup
+                fieldId="cron-monthly"
+                validated={cronErrors.monthlyTime && cronSettings.monthly ? "error" : "default"}
+              >
+                <div style={{ display: "flex", alignItems: "center" }}>
+                  <Switch
+                    id="cron-monthly"
+                    aria-label="Monatlich (monthly)"
+                    isChecked={cronSettings.monthly}
+                    onChange={() => handleCronSwitch("monthly")}
+                  />
+                  <label className="cron-label" htmlFor="cron-monthly-time">Monatlich (monthly)</label>
+                  <TextInput
+                    id="cron-monthly-time"
+                    value={cronSettings.monthlyTime}
+                    type="text"
+                    onChange={(_event, value) => handleCronChange("monthlyTime", value)}
+                    aria-label="Monatlich Zeit"
+                    isDisabled={!cronSettings.monthly}
+                    style={{width: "200px", marginLeft: "1em"}}
+                    validated={cronErrors.monthlyTime && cronSettings.monthly ? "error" : "default"}
+                  />
+                  <Tooltip content="Cron-Syntax (z.B. 30 2 1 * *)">
+                    <InfoCircleIcon style={{marginLeft: "0.5em", color: "#888", cursor: "pointer"}} />
+                  </Tooltip>
+                </div>
+                {cronErrors.monthlyTime && cronSettings.monthly && (
+                  <FormHelperText isError>{cronErrors.monthlyTime}</FormHelperText>
+                )}
               </FormGroup>
-              <Button variant="primary" onClick={saveCron}>Cronjobs speichern</Button>
+              <Tooltip
+                content={cronHasErrors ? "Bitte korrigieren Sie die Cron-Syntax-Fehler." : ""}
+                isVisible={cronHasErrors}
+              >
+                <span>
+                  <Button
+                    variant="primary"
+                    onClick={saveCron}
+                    isDisabled={cronHasErrors || isSavingCron}
+                  >
+                    {isSavingCron ? <Spinner size="sm" /> : "Cronjobs speichern"}
+                  </Button>
+                </span>
+              </Tooltip>
+              <Button
+                variant="secondary"
+                style={{marginLeft: "0.5em"}}
+                onClick={loadCron}
+                isDisabled={isSavingCron}
+              >
+                Cronjobs neu laden
+              </Button>
             </Form>
             {cronLoaded && (
               <div style={{marginTop: "1em"}}>
                 <strong>Aktuelle /etc/cron.d/rsnapshot:</strong>
-                <pre style={{background: "#f8f8f8", padding: "1em", border: "1px solid #ccc", minHeight: "100px"}}>
+                <pre style={{padding: "1em", border: "1px solid #ccc", minHeight: "100px"}}>
                   {cronFileContent}
                 </pre>
               </div>
             )}
+          </StackItem>
+          <StackItem>
+            <strong>Ausgabe / Log:</strong>
+            <pre style={{padding: "1em", border: "1px solid #ccc", minHeight: "100px"}}>{output}</pre>
           </StackItem>
         </Stack>
       </PageSection>
