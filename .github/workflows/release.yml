@@ -6,7 +6,7 @@ on:
   push:
     tags:
       # this is a glob, not a regexp
-      - '[0-9]*'
+      - 'v[0-9]*.[0-9]*'
 jobs:
   source:
     runs-on: ubuntu-latest
