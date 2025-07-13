@@ -238,6 +238,9 @@ const App: React.FC = () => {
   const [successFlash, setSuccessFlash] = useState(false);
 
   const [snapshotRoot, setSnapshotRoot] = useState("");
+  const [snapshotRootStatus, setSnapshotRootStatus] = useState<"ok"|"notfound"|"notwritable"|"empty"|"error">("empty");
+  const [snapshotRootStatusMsg, setSnapshotRootStatusMsg] = useState<string>("");
+
   const [logfile, setLogfile] = useState("");
   const [verbose, setVerbose] = useState("");
   const [intervalRows, setIntervalRows] = useState<IntervalRow[]>([...DEFAULT_INTERVALS]);
@@ -257,9 +260,39 @@ const App: React.FC = () => {
 
   const [cronPreview, setCronPreview] = useState<{[key: string]: string}>({});
 
-  // NEU: Ref für Tab-Workaround im TextArea
+  // Refs für Tabulator-Workaround
   const rawConfRef = useRef<HTMLTextAreaElement>(null);
   const restRef = useRef<HTMLTextAreaElement>(null);
+
+  // Snapshot Root prüfen
+  const checkSnapshotRoot = useCallback((dir: string) => {
+    if (!dir || dir.trim() === "") {
+      setSnapshotRootStatus("empty");
+      setSnapshotRootStatusMsg("Bitte angeben");
+      return;
+    }
+    cockpit.spawn([ "bash", "-c", `[ -d "${dir.replace(/"/g, '\\"')}" ] && [ -w "${dir.replace(/"/g, '\\"')}" ] && echo OK || ( [ -d "${dir.replace(/"/g, '\\"')}" ] && echo NOWRITE || echo NOEXIST )` ])
+      .then((out: string) => {
+        if (out.trim() === "OK") {
+          setSnapshotRootStatus("ok");
+          setSnapshotRootStatusMsg("Verzeichnis existiert und ist beschreibbar.");
+        } else if (out.trim() === "NOWRITE") {
+          setSnapshotRootStatus("notwritable");
+          setSnapshotRootStatusMsg("Verzeichnis existiert, ist aber nicht beschreibbar!");
+        } else {
+          setSnapshotRootStatus("notfound");
+          setSnapshotRootStatusMsg("Verzeichnis existiert nicht! rsnapshot wird das Verzeichnis anlegen (Ausnahme: no_create_root 1).");
+        }
+      })
+      .catch((err: any) => {
+        setSnapshotRootStatus("error");
+        setSnapshotRootStatusMsg("Fehler bei der Prüfung: " + (err?.message || err));
+      });
+  }, []);
+
+  useEffect(() => {
+    checkSnapshotRoot(snapshotRoot);
+  }, [snapshotRoot, checkSnapshotRoot]);
 
   // Configtest ausführen
   const runConfigTest = useCallback(() => {
@@ -307,6 +340,7 @@ const App: React.FC = () => {
     loadLastBackup();
     // eslint-disable-next-line
   }, []);
+  
 
   useEffect(() => {
     cockpit.spawn(["which", "rsnapshot"])
@@ -334,6 +368,11 @@ const App: React.FC = () => {
       })
       .catch(() => setLastBackupInfo("Kein Backup gefunden."));
   }, [snapshotRoot]);
+
+  useEffect(() => {
+    loadLastBackup();
+  }, [snapshotRoot, loadLastBackup]);
+
 
   function saveAll() {
     setIsSavingConfig(true);
@@ -628,7 +667,13 @@ const App: React.FC = () => {
                   aria-label="Snapshot Root"
                   placeholder="/mnt/backup/storage/"
                 />
+                {lastBackupInfo && (
+                  <FormHelperText style={{ color: "#0066cc", marginTop: 2 }}>
+                    {lastBackupInfo}
+                  </FormHelperText>
+                )}
               </FormGroup>
+
               <FormGroup label="Intervalle & Cronjobs" fieldId="intervals">
                 <FormHelperText>
                   Definiert, wie viele Snapshots pro Intervall gehalten werden und wann sie laufen. Sie können Intervalle hinzufügen oder entfernen.
@@ -837,7 +882,6 @@ const App: React.FC = () => {
                     </Button>
                   </Tooltip>
                 </div>
-                {/* TAB-WORKAROUND: onKeyDown für Tabulator */}
                 <TextArea
                   ref={rawConfRef}
                   value={rawConf}
