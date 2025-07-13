@@ -1,16 +1,15 @@
 import '@patternfly/react-core/dist/styles/base.css';
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import parser from "cron-parser";
 import cockpit from "cockpit";
 import {
   Page, PageSection, Title, Button, TextArea, Alert, AlertGroup, Stack, StackItem,
-  Toolbar, ToolbarContent, ToolbarItem, Form, FormGroup, TextInput, Tooltip, Spinner, Switch, FormHelperText, Badge,
-  FormSelect, FormSelectOption
+  Form, FormGroup, TextInput, Tooltip, Spinner, Switch, FormHelperText, Badge
 } from "@patternfly/react-core";
 import {
   Table, Thead, Tbody, Tr, Th, Td
 } from '@patternfly/react-table';
-import { SyncAltIcon, SaveIcon, SearchIcon, PlusIcon, MinusCircleIcon } from '@patternfly/react-icons';
+import { SyncAltIcon, SaveIcon, SearchIcon, PlusIcon, MinusCircleIcon, PlayIcon, PlayCircleIcon } from '@patternfly/react-icons';
 import "./app.scss";
 
 type IntervalRow = {
@@ -173,7 +172,6 @@ function isValidCount(v: string) {
 
 function getNextCronRun(cron: string): string {
   try {
-    // Shortcuts wie @daily etc.
     const shortcutMap: Record<string, string> = {
       "@hourly": "0 * * * *",
       "@daily": "0 0 * * *",
@@ -181,7 +179,7 @@ function getNextCronRun(cron: string): string {
       "@monthly": "0 0 1 * *",
       "@yearly": "0 0 1 1 *",
       "@annually": "0 0 1 1 *",
-      "@reboot": "", // Nicht berechenbar
+      "@reboot": "",
     };
     const cronExpr = shortcutMap[cron.trim()] || cron;
     if (!cronExpr) return "Wird beim Systemstart ausgeführt";
@@ -201,6 +199,34 @@ function hasSudoRights(): Promise<boolean> {
 
 function isValidBackupJob(b: BackupJob): boolean {
   return !!b.source && !!b.dest && b.source.trim() !== "" && b.dest.trim() !== "";
+}
+
+function getActiveRetainMap(conf: string): Record<string, { count: string; active: boolean }> {
+  const map: Record<string, { count: string; active: boolean }> = {};
+  conf.split("\n").forEach(line => {
+    const trimmed = line.trim();
+    if (/^(retain|interval)\s+/.test(trimmed)) {
+      const isActive = !trimmed.startsWith("#");
+      const [, name, count] = trimmed.replace(/^#/, "").split(/\s+/);
+      if (name) map[name] = { count: count || "", active: isActive };
+    }
+  });
+  return map;
+}
+
+function getActiveCronMap(cron: string): Record<string, { cronSyntax: string; active: boolean }> {
+  const map: Record<string, { cronSyntax: string; active: boolean }> = {};
+  cron.split("\n").forEach(line => {
+    if (/^\s*#/.test(line)) return;
+    const trimmed = line.trim();
+    const m = trimmed.match(/^(.+?)\s+root\s+\/usr\/bin\/rsnapshot\s+(\S+)/);
+    if (m) {
+      const cronSyntax = m[1];
+      const name = m[2];
+      map[name] = { cronSyntax, active: true };
+    }
+  });
+  return map;
 }
 
 const App: React.FC = () => {
@@ -231,9 +257,6 @@ const App: React.FC = () => {
 
   const [cronPreview, setCronPreview] = useState<{[key: string]: string}>({});
 
-  // Backup-Intervall-Auswahl
-  const [backupInterval, setBackupInterval] = useState<string>("daily");
-
   // Gemeinsames Laden und Mergen!
   const loadAll = useCallback(() => {
     Promise.all([
@@ -255,10 +278,6 @@ const App: React.FC = () => {
       // Intervalle aus Cron mergen
       const mergedIntervals = parseCron(cronData, parsedConfig.intervals);
       setIntervalRows(mergedIntervals);
-
-      // Setze das erste aktive Intervall als Default für das Dropdown
-      const firstActive = mergedIntervals.find(i => i.active);
-      if (firstActive) setBackupInterval(firstActive.name);
     });
     loadLastBackup();
     // eslint-disable-next-line
@@ -385,6 +404,40 @@ const App: React.FC = () => {
     // eslint-disable-next-line
   }, [intervalRows]);
 
+  // Prüfe für jeden Intervall, ob er exakt in beiden Configs aktiv ist
+  const playButtonStates = useMemo(() => {
+    const retainMap = getActiveRetainMap(rawConf);
+    const cronMap = getActiveCronMap(rawCron);
+    const result: Record<string, { enabled: boolean; reason: string }> = {};
+    intervalRows.forEach(row => {
+      const retain = retainMap[row.name];
+      const cron = cronMap[row.name];
+      if (!retain || !retain.active) {
+        result[row.id] = {
+          enabled: false,
+          reason: "Dieses Intervall ist nicht als aktives retain/intervall in rsnapshot.conf gespeichert."
+        };
+      } else if (!cron || !cron.active) {
+        result[row.id] = {
+          enabled: false,
+          reason: "Dieses Intervall ist nicht als aktiver Cronjob in /etc/cron.d/rsnapshot gespeichert."
+        };
+      } else if (
+        retain.count !== row.count ||
+        row.cronSyntax !== cron.cronSyntax ||
+        !row.active
+      ) {
+        result[row.id] = {
+          enabled: false,
+          reason: "Dieses Intervall ist nicht exakt so gespeichert (Name, Anzahl, Cron-Syntax, Aktiv-Status müssen übereinstimmen)."
+        };
+      } else {
+        result[row.id] = { enabled: true, reason: "" };
+      }
+    });
+    return result;
+  }, [intervalRows, rawConf, rawCron]);
+
   const handleIntervalRow = useCallback((id: string, field: string, value: any) => {
     setIntervalRows(rows =>
       rows.map((row) =>
@@ -483,42 +536,6 @@ const App: React.FC = () => {
             Bitte führen Sie Cockpit als Administrator aus.
           </Alert>
         )}
-        <Toolbar>
-          <ToolbarContent>
-            <ToolbarItem>
-              <FormSelect
-                value={backupInterval}
-                onChange={v => setBackupInterval(v)}
-                aria-label="Backup-Intervall auswählen"
-              >
-                {intervalRows.filter(i => i.active).map(i => (
-                  <FormSelectOption key={i.id} value={i.name} label={i.name} />
-                ))}
-              </FormSelect>
-            </ToolbarItem>
-            <ToolbarItem>
-              <Button variant="primary" onClick={() => {
-                setOutput(`Starte rsnapshot-Backup (${backupInterval})...\n`);
-                cockpit.spawn(["sudo", "rsnapshot", backupInterval])
-                  .stream(data => setOutput(prev => prev + data))
-                  .then(() => setOutput(prev => prev + "\nBackup abgeschlossen.\n"))
-                  .catch(error => setOutput(prev => prev + "\nFehler beim Backup: " + (error?.message || JSON.stringify(error)) + "\n"));
-              }} isDisabled={!rsnapshotAvailable || !sudoAvailable}>Backup starten</Button>
-            </ToolbarItem>
-            <ToolbarItem>
-              <Button variant="secondary" onClick={() => {
-                setOutput("Lade Logdatei...\n");
-                cockpit.spawn(["test", "-f", "/var/log/rsnapshot.log"])
-                  .then(() => {
-                    cockpit.spawn(["tail", "-n", "100", "/var/log/rsnapshot.log"])
-                      .then(data => setOutput(data))
-                      .catch(error => setOutput("Fehler beim Laden der Logdatei: " + (error?.message || JSON.stringify(error)) + "\n"));
-                  })
-                  .catch(() => setOutput("Das Logfile /var/log/rsnapshot.log existiert nicht.\nBitte prüfen Sie, ob Logging in /etc/rsnapshot.conf aktiviert ist (logfile /var/log/rsnapshot.log)."));
-              }} isDisabled={!rsnapshotAvailable}>Log anzeigen</Button>
-            </ToolbarItem>
-          </ToolbarContent>
-        </Toolbar>
         <Stack hasGutter>
           <StackItem>
             <div className={`conf-header${successFlash ? " success-flash" : ""}`} style={{alignItems: "center"}}>
@@ -562,6 +579,8 @@ const App: React.FC = () => {
                       <Th>Name</Th>
                       <Th>Anzahl</Th>
                       <Th>Cron-Syntax</Th>
+                      <Th></Th>
+                      <Th></Th>
                       <Th></Th>
                     </Tr>
                   </Thead>
@@ -608,6 +627,56 @@ const App: React.FC = () => {
                           {cronPreview[row.id] && (
                             <div style={{fontSize: "0.9em", color: "#555", marginTop: 4}}>{cronPreview[row.id]}</div>
                           )}
+                        </Td>
+                        <Td>
+                          <Tooltip
+                            content={playButtonStates[row.id]?.enabled
+                              ? "Backup für dieses Intervall starten"
+                              : playButtonStates[row.id]?.reason || "Dieses Intervall ist nicht korrekt gespeichert"}
+                          >
+                            <span>
+                              <Button
+                                variant="plain"
+                                aria-label="Backup starten"
+                                isDisabled={!playButtonStates[row.id]?.enabled || !rsnapshotAvailable || !sudoAvailable}
+                                onClick={() => {
+                                  setOutput(`Starte rsnapshot-Backup (${row.name})...\n`);
+                                  cockpit.spawn(["sudo", "rsnapshot", row.name])
+                                    .stream(data => setOutput(prev => prev + data))
+                                    .then(() => setOutput(prev => prev + "\nBackup abgeschlossen.\n"))
+                                    .catch(error => setOutput(prev => prev + "\nFehler beim Backup: " + (error?.message || JSON.stringify(error)) + "\n"));
+                                }}
+                              >
+                                <PlayIcon />
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        </Td>
+                        <Td>
+                          <Tooltip
+                            content={
+                              playButtonStates[row.id]?.enabled
+                                ? "Testlauf (dry-run): Zeigt, was rsnapshot für dieses Intervall tun würde (rsnapshot -t " + row.name + ")"
+                                : "Dryrun ist nur möglich, wenn das Intervall exakt gespeichert ist."
+                            }
+                          >
+                            <span>
+                              <Button
+                                variant="plain"
+                                aria-label="Dryrun"
+                                isDisabled={!playButtonStates[row.id]?.enabled || !rsnapshotAvailable || !sudoAvailable}
+                                onClick={() => {
+                                  setOutput(`Starte Testlauf (dry-run) für rsnapshot ${row.name}...\n`);
+                                  cockpit.spawn(["sudo", "rsnapshot", "-t", row.name])
+                                    .stream(data => setOutput(prev => prev + data))
+                                    .then(() => setOutput(prev => prev + "\nTestlauf abgeschlossen.\n"))
+                                    .catch(error => setOutput(prev => prev + "\nFehler beim Testlauf: " + (error?.message || JSON.stringify(error)) + "\n"));
+                                }}
+                              >
+                                <PlayCircleIcon />
+                              </Button>
+                            </span>
+                          </Tooltip>
                         </Td>
                         <Td>
                           <Button variant="plain" aria-label="Intervall entfernen" isDisabled={intervalRows.length <= 1}
