@@ -1,3 +1,4 @@
+import '@patternfly/react-core/dist/styles/base.css';
 import React, { useState, useEffect } from "react";
 import cockpit from "cockpit";
 import {
@@ -19,7 +20,6 @@ import {
   TextInput
 } from "@patternfly/react-core";
 import "./app.scss";
-import '@patternfly/react-core/dist/styles/base.css';
 
 
 type CronSettings = {
@@ -272,6 +272,7 @@ const App: React.FC = () => {
               style={{ minHeight: "200px", fontFamily: "monospace" }}
               placeholder="Hier erscheint die rsnapshot.conf"
               isDisabled={!rsnapshotAvailable}
+              aria-label="rsnapshot Konfiguration"
             />
           </StackItem>
           <StackItem>
