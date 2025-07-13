@@ -2,70 +2,70 @@ import '@patternfly/react-core/dist/styles/base.css';
 import React, { useState, useEffect } from "react";
 import cockpit from "cockpit";
 import {
-  Page,
-  PageSection,
-  Title,
-  Button,
-  TextArea,
-  Alert,
-  AlertGroup,
-  Stack,
-  StackItem,
-  Toolbar,
-  ToolbarContent,
-  ToolbarItem,
-  Form,
-  FormGroup,
-  Switch,
-  TextInput,
-  FormHelperText,
-  Tooltip,
-  Spinner
+  Page, PageSection, Title, Button, TextArea, Alert, AlertGroup, Stack, StackItem,
+  Toolbar, ToolbarContent, ToolbarItem, Form, FormGroup, Switch, TextInput, FormHelperText,
+  Tooltip, Spinner
 } from "@patternfly/react-core";
-import { SyncAltIcon, InfoCircleIcon, SaveIcon } from '@patternfly/react-icons';
+import {
+  Table, Thead, Tbody, Tr, Th, Td
+} from '@patternfly/react-table';
+import { SyncAltIcon, InfoCircleIcon, SaveIcon, PlusCircleIcon, MinusCircleIcon } from '@patternfly/react-icons';
 import "./app.scss";
 
-type CronSettings = {
-  hourly: boolean;
-  daily: boolean;
-  weekly: boolean;
-  monthly: boolean;
-  hourlyTime: string;
-  dailyTime: string;
-  weeklyTime: string;
-  monthlyTime: string;
-};
+// --- Hilfsfunktionen zum Parsen/Serialisieren der Konfiguration ---
 
-const defaultCronSettings: CronSettings = {
-  hourly: false,
-  daily: false,
-  weekly: false,
-  monthly: false,
-  hourlyTime: "0 * * * *",
-  dailyTime: "30 3 * * *",
-  weeklyTime: "0 3 * * 1",
-  monthlyTime: "30 2 1 * *"
-};
+function parseConfig(conf: string) {
+  const lines = conf.split("\n");
+  const result: any = {
+    snapshot_root: "",
+    logfile: "",
+    verbose: "",
+    intervals: [],
+    backups: [],
+    excludes: [],
+    rest: []
+  };
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("snapshot_root")) result.snapshot_root = trimmed.split(/\s+/)[1] || "";
+    else if (trimmed.startsWith("logfile")) result.logfile = trimmed.split(/\s+/)[1] || "";
+    else if (trimmed.startsWith("verbose")) result.verbose = trimmed.split(/\s+/)[1] || "";
+    else if (/^(retain|interval)\s+/.test(trimmed)) {
+      const [, name, count] = trimmed.split(/\s+/);
+      result.intervals.push({ name, count });
+    } else if (trimmed.startsWith("backup")) {
+      // backup  <source>  <dest>  [options]
+      const [, source, dest, ...opts] = trimmed.split(/\s+/);
+      result.backups.push({ source, dest, options: opts.join(" ") });
+    } else if (trimmed.startsWith("exclude")) {
+      result.excludes.push(trimmed.replace(/^exclude\s+/, ""));
+    } else if (trimmed.startsWith("exclude_file")) {
+      result.excludes.push("file:" + trimmed.replace(/^exclude_file\s+/, ""));
+    } else if (trimmed && !trimmed.startsWith("#")) {
+      result.rest.push(line);
+    }
+  }
+  return result;
+}
+
+function serializeConfig(parsed: any) {
+  let lines: string[] = [];
+  if (parsed.snapshot_root) lines.push(`snapshot_root\t${parsed.snapshot_root}`);
+  if (parsed.logfile) lines.push(`logfile\t${parsed.logfile}`);
+  if (parsed.verbose) lines.push(`verbose\t${parsed.verbose}`);
+  parsed.intervals.forEach((i: any) => lines.push(`retain\t${i.name}\t${i.count}`));
+  parsed.backups.forEach((b: any) => lines.push(`backup\t${b.source}\t${b.dest}\t${b.options}`));
+  parsed.excludes.forEach((e: string) =>
+    e.startsWith("file:") ? lines.push(`exclude_file\t${e.slice(5)}`) : lines.push(`exclude\t${e}`)
+  );
+  if (parsed.rest.length) lines = lines.concat(parsed.rest);
+  return lines.join("\n");
+}
+
+// --- Hauptkomponente ---
 
 const CRON_PATH = "/etc/cron.d/rsnapshot";
 const CONF_PATH = "/etc/rsnapshot.conf";
-
-// Cron-Syntax-Validierung (einfach, prüft auf 5 Felder)
-function isValidCronSyntax(s: string): boolean {
-  // Hinweis: Unterstützt KEINE @reboot, @hourly etc.
-  return /^([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)$/.test(s.trim());
-}
-
-// Extrahiert alle "retain" oder "interval" Namen aus der Konfiguration
-function extractIntervals(conf: string): string[] {
-  const intervals: string[] = [];
-  const regex = /^\s*(interval|retain)\s+([a-zA-Z0-9_-]+)\s+\d+/gm;
-  let match;
-  while ((match = regex.exec(conf)) !== null) {
-    intervals.push(match[2]);
-  }
-  return intervals;
-}
 
 const App: React.FC = () => {
   const [rsnapshotAvailable, setRsnapshotAvailable] = useState<boolean | null>(null);
@@ -73,31 +73,33 @@ const App: React.FC = () => {
   const [config, setConfig] = useState("");
   const [configLoaded, setConfigLoaded] = useState(false);
   const [alerts, setAlerts] = useState<{title: string, variant: 'success'|'danger'|'warning'}[]>([]);
-  const [configSaved, setConfigSaved] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
 
   // Cron
-  const [cronSettings, setCronSettings] = useState<CronSettings>(defaultCronSettings);
+  const [cronSettings, setCronSettings] = useState<any>({
+    hourly: false, daily: false, weekly: false, monthly: false,
+    hourlyTime: "0 * * * *", dailyTime: "30 3 * * *", weeklyTime: "0 3 * * 1", monthlyTime: "30 2 1 * *"
+  });
   const [cronLoaded, setCronLoaded] = useState(false);
-  const [cronSaved, setCronSaved] = useState(false);
   const [isSavingCron, setIsSavingCron] = useState(false);
 
   // Fehlerstatus für Cron-Zeitfelder
-  const [cronErrors, setCronErrors] = useState<{
-    hourlyTime?: string;
-    dailyTime?: string;
-    weeklyTime?: string;
-    monthlyTime?: string;
-  }>({});
-
+  const [cronErrors, setCronErrors] = useState<any>({});
   // Für die Prüfung: Sind alle aktivierten Cronjobs auch in der Konfiguration vorhanden?
   const [confIntervals, setConfIntervals] = useState<string[]>([]);
   const [cronConfMismatch, setCronConfMismatch] = useState<string[]>([]);
-
   // Raw-Editing für /etc/cron.d/rsnapshot
   const [cronRawContent, setCronRawContent] = useState<string>("");
   const [cronRawLoaded, setCronRawLoaded] = useState(false);
   const [isSavingCronRaw, setIsSavingCronRaw] = useState(false);
+
+  // --- rsnapshot.conf als strukturierte Felder
+  const [confParsed, setConfParsed] = useState<any>(parseConfig(config));
+
+  // --- Manuelle Bearbeitung (Rohtext) für beide Dateien
+  const [rawConf, setRawConf] = useState(config);
+  const [rawCron, setRawCron] = useState(cronRawContent);
+  const [isSavingRawConf, setIsSavingRawConf] = useState(false);
 
   // === Initial-Laden ===
   useEffect(() => {
@@ -106,9 +108,28 @@ const App: React.FC = () => {
       .catch(() => setRsnapshotAvailable(false));
     loadCron();
     loadConfig();
+    // eslint-disable-next-line
   }, []);
 
-  // === Prüfung, ob Cronjobs und Konfiguration zusammenpassen ===
+  // Wenn config von außen kommt, neu parsen
+  useEffect(() => {
+    setConfParsed(parseConfig(config));
+    setRawConf(config);
+  }, [config]);
+
+  // Wenn confParsed geändert wird, config serialisieren und melden
+  useEffect(() => {
+    setConfig(serializeConfig(confParsed));
+    setConfIntervals(confParsed.intervals.map((i: any) => i.name));
+    // eslint-disable-next-line
+  }, [confParsed]);
+
+  // Wenn cronRawContent von außen kommt, aktualisiere rawCron
+  useEffect(() => {
+    setRawCron(cronRawContent);
+  }, [cronRawContent]);
+
+  // Prüfung, ob Cronjobs und Konfiguration zusammenpassen
   useEffect(() => {
     checkCronConfigMatch();
     // eslint-disable-next-line
@@ -139,7 +160,6 @@ const App: React.FC = () => {
         setConfig(data);
         setConfigLoaded(true);
         setOutput("Konfiguration geladen.\n");
-        setConfIntervals(extractIntervals(data));
       })
       .catch(error => {
         setOutput("Fehler beim Laden der Konfiguration: " + (error?.message || JSON.stringify(error)) + "\n");
@@ -147,7 +167,6 @@ const App: React.FC = () => {
           ...alerts,
           {title: "Fehler beim Laden der Konfiguration: " + (error?.message || JSON.stringify(error)), variant: "danger"}
         ]);
-        setConfIntervals([]);
       });
   };
 
@@ -159,8 +178,6 @@ const App: React.FC = () => {
       .then(() => {
         setOutput("Konfiguration gespeichert.\n");
         setAlerts(alerts => [...alerts, {title: "Konfiguration gespeichert", variant: "success"}]);
-        setConfigSaved(true);
-        setTimeout(() => setConfigSaved(false), 5000);
         loadConfig();
       })
       .catch(error => {
@@ -173,12 +190,28 @@ const App: React.FC = () => {
       .finally(() => setIsSavingConfig(false));
   };
 
+  // Speichern der rohen rsnapshot.conf
+  const saveRawConf = () => {
+    setIsSavingRawConf(true);
+    cockpit.file(CONF_PATH, { superuser: "require" }).replace(rawConf)
+      .then(() => {
+        setAlerts(alerts => [...alerts, {title: "Konfiguration gespeichert", variant: "success"}]);
+        loadConfig();
+      })
+      .catch(error => {
+        setAlerts(alerts => [
+          ...alerts,
+          {title: "Fehler beim Speichern der Konfiguration: " + (error?.message || JSON.stringify(error)), variant: "danger"}
+        ]);
+      })
+      .finally(() => setIsSavingRawConf(false));
+  };
+
   const showLog = () => {
     if (!rsnapshotAvailable) return;
     setOutput("Lade Logdatei...\n");
     cockpit.spawn(["test", "-f", "/var/log/rsnapshot.log"])
       .then(() => {
-        // Zeige nur die letzten 100 Zeilen für Performance
         cockpit.spawn(["tail", "-n", "100", "/var/log/rsnapshot.log"])
           .then(data => setOutput(data))
           .catch(error => {
@@ -200,12 +233,11 @@ const App: React.FC = () => {
   const loadCron = () => {
     cockpit.spawn(["cat", CRON_PATH])
       .then(data => {
-        const settings = { ...defaultCronSettings };
+        const settings = {
+          hourly: false, daily: false, weekly: false, monthly: false,
+          hourlyTime: "0 * * * *", dailyTime: "30 3 * * *", weeklyTime: "0 3 * * 1", monthlyTime: "30 2 1 * *"
+        };
         const lines = data.split("\n");
-        settings.hourly = false;
-        settings.daily = false;
-        settings.weekly = false;
-        settings.monthly = false;
         for (const line of lines) {
           if (/^\s*#/.test(line)) continue;
           const trimmed = line.trim();
@@ -233,7 +265,10 @@ const App: React.FC = () => {
         setCronErrors({});
       })
       .catch(() => {
-        setCronSettings(defaultCronSettings);
+        setCronSettings({
+          hourly: false, daily: false, weekly: false, monthly: false,
+          hourlyTime: "0 * * * *", dailyTime: "30 3 * * *", weeklyTime: "0 3 * * 1", monthlyTime: "30 2 1 * *"
+        });
         setCronLoaded(true);
         setCronRawContent("");
         setCronRawLoaded(true);
@@ -268,8 +303,6 @@ const App: React.FC = () => {
     cockpit.file(CRON_PATH, { superuser: "require" }).replace(cron)
       .then(() => {
         setAlerts(alerts => [...alerts, {title: "Cronjobs gespeichert", variant: "success"}]);
-        setCronSaved(true);
-        setTimeout(() => setCronSaved(false), 5000);
         loadCron();
       })
       .catch(error => {
@@ -284,7 +317,7 @@ const App: React.FC = () => {
   // Raw-Editing für /etc/cron.d/rsnapshot
   const saveCronRaw = () => {
     setIsSavingCronRaw(true);
-    cockpit.file(CRON_PATH, { superuser: "require" }).replace(cronRawContent)
+    cockpit.file(CRON_PATH, { superuser: "require" }).replace(rawCron)
       .then(() => {
         setAlerts(alerts => [...alerts, {title: "Cron-Datei gespeichert", variant: "success"}]);
         loadCron();
@@ -299,12 +332,12 @@ const App: React.FC = () => {
   };
 
   // Switch-Handler für Cron-Intervalle (Checkboxen)
-  const handleCronSwitch = (field: keyof CronSettings) => {
-    setCronSettings(prev => {
+  const handleCronSwitch = (field: string) => {
+    setCronSettings((prev: any) => {
       const updated = { ...prev, [field]: !prev[field] };
       // Fehler für das Zeitfeld zurücksetzen, wenn Intervall deaktiviert wird
       if (!updated[field]) {
-        let errorField: keyof typeof cronErrors | undefined;
+        let errorField: string | undefined;
         switch (field) {
           case "hourly": errorField = "hourlyTime"; break;
           case "daily": errorField = "dailyTime"; break;
@@ -313,7 +346,7 @@ const App: React.FC = () => {
           default: errorField = undefined;
         }
         if (errorField) {
-          setCronErrors(prevErrors => ({ ...prevErrors, [errorField]: undefined }));
+          setCronErrors((prevErrors: any) => ({ ...prevErrors, [errorField]: undefined }));
         }
       }
       return updated;
@@ -321,9 +354,8 @@ const App: React.FC = () => {
   };
 
   // Handler für Zeitfeld-Änderung
-  const handleCronChange = (field: keyof CronSettings, value: any) => {
-    setCronSettings(prev => ({ ...prev, [field]: value }));
-
+  const handleCronChange = (field: string, value: any) => {
+    setCronSettings((prev: any) => ({ ...prev, [field]: value }));
     // Validierung nur für Zeitfelder
     if (
       field === "hourlyTime" ||
@@ -331,15 +363,14 @@ const App: React.FC = () => {
       field === "weeklyTime" ||
       field === "monthlyTime"
     ) {
-      const isValid = isValidCronSyntax(value);
-      setCronErrors(prev => ({
+      const isValid = /^([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)\s+([\d\/*,\-]+)$/.test(value.trim());
+      setCronErrors((prev: any) => ({
         ...prev,
         [field]: isValid ? undefined : "Ungültige Cron-Syntax (5 Felder, z.B. 0 * * * *)"
       }));
     }
   };
 
-  // Button deaktivieren, wenn ein Fehler in einem aktivierten Zeitfeld vorliegt
   const cronHasErrors = (
     (cronSettings.hourly && !!cronErrors.hourlyTime) ||
     (cronSettings.daily && !!cronErrors.dailyTime) ||
@@ -347,7 +378,6 @@ const App: React.FC = () => {
     (cronSettings.monthly && !!cronErrors.monthlyTime)
   );
 
-  // === Prüfung: Cronjobs vs. Konfiguration ===
   function checkCronConfigMatch() {
     const missing: string[] = [];
     if (cronSettings.hourly && !confIntervals.includes("hourly")) missing.push("hourly");
@@ -357,7 +387,79 @@ const App: React.FC = () => {
     setCronConfMismatch(missing);
   }
 
-  // === RENDER ===
+  // === GUI für rsnapshot.conf ===
+
+  // Handler für einfache Felder
+  const handleField = (field: string, value: string) => {
+    setConfParsed((prev: any) => ({ ...prev, [field]: value }));
+  };
+
+  // Handler für Intervalle
+  const handleInterval = (idx: number, field: string, value: string) => {
+    setConfParsed((prev: any) => {
+      const intervals = [...prev.intervals];
+      intervals[idx][field] = value;
+      return { ...prev, intervals };
+    });
+  };
+
+  const addInterval = () => {
+    setConfParsed((prev: any) => ({
+      ...prev,
+      intervals: [...prev.intervals, { name: "", count: "" }]
+    }));
+  };
+  const removeInterval = (idx: number) => {
+    setConfParsed((prev: any) => {
+      const intervals = [...prev.intervals];
+      intervals.splice(idx, 1);
+      return { ...prev, intervals };
+    });
+  };
+
+  // Handler für Backup-Jobs
+  const handleBackup = (idx: number, field: string, value: string) => {
+    setConfParsed((prev: any) => {
+      const backups = [...prev.backups];
+      backups[idx][field] = value;
+      return { ...prev, backups };
+    });
+  };
+  const addBackup = () => {
+    setConfParsed((prev: any) => ({
+      ...prev,
+      backups: [...prev.backups, { source: "", dest: "", options: "" }]
+    }));
+  };
+  const removeBackup = (idx: number) => {
+    setConfParsed((prev: any) => {
+      const backups = [...prev.backups];
+      backups.splice(idx, 1);
+      return { ...prev, backups };
+    });
+  };
+
+  // Handler für Excludes
+  const handleExclude = (idx: number, value: string) => {
+    setConfParsed((prev: any) => {
+      const excludes = [...prev.excludes];
+      excludes[idx] = value;
+      return { ...prev, excludes };
+    });
+  };
+  const addExclude = () => {
+    setConfParsed((prev: any) => ({
+      ...prev,
+      excludes: [...prev.excludes, ""]
+    }));
+  };
+  const removeExclude = (idx: number) => {
+    setConfParsed((prev: any) => {
+      const excludes = [...prev.excludes];
+      excludes.splice(idx, 1);
+      return { ...prev, excludes };
+    });
+  };
 
   return (
     <Page>
@@ -389,7 +491,7 @@ const App: React.FC = () => {
         </Toolbar>
         <Stack hasGutter>
           <StackItem>
-            <div className="conf-header">
+            <div className="conf-header" style={{alignItems: "center"}}>
               <strong>rsnapshot Konfiguration:</strong>
               <Tooltip content="Konfiguration neu laden">
                 <SyncAltIcon className="conf-reload" onClick={loadConfig} />
@@ -406,18 +508,107 @@ const App: React.FC = () => {
                 </Button>
               </Tooltip>
             </div>
-            <TextArea
-              value={config}
-              onChange={(_event, value) => setConfig(value)}
-              style={{ minHeight: "200px", fontFamily: "monospace" }}
-              placeholder="Hier erscheint die rsnapshot.conf"
-              isDisabled={!rsnapshotAvailable}
-              aria-label="rsnapshot Konfiguration"
-            />
+            <Form>
+              <FormGroup label="Backup-Ziel (snapshot_root)" fieldId="snapshot_root">
+                <TextInput
+                  id="snapshot_root"
+                  value={confParsed.snapshot_root}
+                  onChange={(_, v) => handleField("snapshot_root", v)}
+                />
+              </FormGroup>
+              <FormGroup label="Logdatei" fieldId="logfile">
+                <TextInput
+                  id="logfile"
+                  value={confParsed.logfile}
+                  onChange={(_, v) => handleField("logfile", v)}
+                />
+              </FormGroup>
+              <FormGroup label="Verbositätslevel" fieldId="verbose">
+                <TextInput
+                  id="verbose"
+                  value={confParsed.verbose}
+                  onChange={(_, v) => handleField("verbose", v)}
+                />
+              </FormGroup>
+              <FormGroup label="Intervalle" fieldId="intervals">
+                <Table variant="compact" aria-label="Intervalle-Tabelle">
+                  <Thead>
+                    <Tr>
+                      <Th>Name</Th>
+                      <Th>Anzahl</Th>
+                      <Th></Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {confParsed.intervals.map((i: any, idx: number) => (
+                      <Tr key={idx}>
+                        <Td>
+                          <TextInput value={i.name} onChange={(_, v) => handleInterval(idx, "name", v)} />
+                        </Td>
+                        <Td>
+                          <TextInput value={i.count} onChange={(_, v) => handleInterval(idx, "count", v)} />
+                        </Td>
+                        <Td>
+                          <Button variant="plain" aria-label="Intervall entfernen" onClick={() => removeInterval(idx)}><MinusCircleIcon /></Button>
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+                <Button variant="link" icon={<PlusCircleIcon />} onClick={addInterval}>Intervall hinzufügen</Button>
+              </FormGroup>
+              <FormGroup label="Backup-Jobs" fieldId="backups">
+                <Table variant="compact" aria-label="Backups-Tabelle">
+                  <Thead>
+                    <Tr>
+                      <Th>Quelle</Th>
+                      <Th>Ziel</Th>
+                      <Th>Optionen</Th>
+                      <Th></Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {confParsed.backups.map((b: any, idx: number) => (
+                      <Tr key={idx}>
+                        <Td>
+                          <TextInput value={b.source} onChange={(_, v) => handleBackup(idx, "source", v)} />
+                        </Td>
+                        <Td>
+                          <TextInput value={b.dest} onChange={(_, v) => handleBackup(idx, "dest", v)} />
+                        </Td>
+                        <Td>
+                          <TextInput value={b.options} onChange={(_, v) => handleBackup(idx, "options", v)} />
+                        </Td>
+                        <Td>
+                          <Button variant="plain" aria-label="Backup entfernen" onClick={() => removeBackup(idx)}><MinusCircleIcon /></Button>
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+                <Button variant="link" icon={<PlusCircleIcon />} onClick={addBackup}>Backup hinzufügen</Button>
+              </FormGroup>
+              <FormGroup label="Ausschlüsse (exclude/exclude_file)" fieldId="excludes">
+                {confParsed.excludes.map((e: string, idx: number) => (
+                  <div key={idx} style={{display: "flex", alignItems: "center", marginBottom: 4}}>
+                    <TextInput value={e} onChange={(_, v) => handleExclude(idx, v)} />
+                    <Button variant="plain" aria-label="Exclude entfernen" onClick={() => removeExclude(idx)}><MinusCircleIcon /></Button>
+                  </div>
+                ))}
+                <Button variant="link" icon={<PlusCircleIcon />} onClick={addExclude}>Ausschluss hinzufügen</Button>
+              </FormGroup>
+              <FormGroup label="Weitere Optionen (Rohtext)" fieldId="rest">
+                <TextArea
+                  value={confParsed.rest.join("\n")}
+                  onChange={(_, v) => setConfParsed((prev: any) => ({ ...prev, rest: v.split("\n") }))}
+                  style={{ minHeight: "100px", fontFamily: "monospace" }}
+                />
+              </FormGroup>
+            </Form>
           </StackItem>
           <StackItem>
             <div className="conf-header">
-              <Title headingLevel="h2" size="md" style={{margin: 0}}>Automatische Backups (Cronjobs)</Title>
+              <strong>Automatische Backups (Cronjobs):</strong>
               <Tooltip content="Cronjobs neu laden">
                 <SyncAltIcon className="conf-reload" onClick={loadCron} />
               </Tooltip>
@@ -578,33 +769,61 @@ const App: React.FC = () => {
             </Form>
           </StackItem>
 
-          {/* Nur noch das Bearbeiten der Datei, keine Anzeige mehr */}
+          {/* Manueller Abschnitt für beide Dateien */}
           <StackItem>
-            <div className="conf-header">
-              <strong>/etc/cron.d/rsnapshot bearbeiten:</strong>
-              <Tooltip content="Cron-Datei neu laden">
-                <SyncAltIcon className="conf-reload" onClick={loadCron} />
-              </Tooltip>
-              <Tooltip content="Cron-Datei speichern">
-                <Button
-                  variant="plain"
-                  aria-label="Cron-Datei speichern"
-                  onClick={saveCronRaw}
-                  isDisabled={!cronRawLoaded || isSavingCronRaw}
-                  style={{marginLeft: "0.2em"}}
-                >
-                  {isSavingCronRaw ? <Spinner size="sm" /> : <SaveIcon />}
-                </Button>
-              </Tooltip>
-            </div>
-            <TextArea
-              value={cronRawContent}
-              onChange={(_event, value) => setCronRawContent(value)}
-              style={{ minHeight: "150px", fontFamily: "monospace" }}
-              placeholder="Hier erscheint die /etc/cron.d/rsnapshot"
-              isDisabled={!rsnapshotAvailable || !cronRawLoaded}
-              aria-label="rsnapshot Cron-Datei"
-            />
+            <Title headingLevel="h2" size="md" style={{marginTop: "2em"}}>Manuelle Bearbeitung</Title>
+            <Stack hasGutter>
+              <StackItem>
+                <div className="conf-header">
+                  <strong>rsnapshot.conf (Rohtext):</strong>
+                  <Tooltip content="Neu laden">
+                    <SyncAltIcon className="conf-reload" onClick={loadConfig} />
+                  </Tooltip>
+                  <Tooltip content="Speichern">
+                    <Button
+                      variant="plain"
+                      aria-label="rsnapshot.conf speichern"
+                      onClick={saveRawConf}
+                      isDisabled={isSavingRawConf}
+                      style={{marginLeft: "0.2em"}}
+                    >
+                      {isSavingRawConf ? <Spinner size="sm" /> : <SaveIcon />}
+                    </Button>
+                  </Tooltip>
+                </div>
+                <TextArea
+                  value={rawConf}
+                  onChange={(_, v) => setRawConf(v)}
+                  style={{ minHeight: "200px", fontFamily: "monospace" }}
+                  aria-label="rsnapshot.conf Rohtext"
+                />
+              </StackItem>
+              <StackItem>
+                <div className="conf-header">
+                  <strong>/etc/cron.d/rsnapshot (Rohtext):</strong>
+                  <Tooltip content="Neu laden">
+                    <SyncAltIcon className="conf-reload" onClick={loadCron} />
+                  </Tooltip>
+                  <Tooltip content="Speichern">
+                    <Button
+                      variant="plain"
+                      aria-label="cron.d speichern"
+                      onClick={saveCronRaw}
+                      isDisabled={isSavingCronRaw}
+                      style={{marginLeft: "0.2em"}}
+                    >
+                      {isSavingCronRaw ? <Spinner size="sm" /> : <SaveIcon />}
+                    </Button>
+                  </Tooltip>
+                </div>
+                <TextArea
+                  value={rawCron}
+                  onChange={(_, v) => setRawCron(v)}
+                  style={{ minHeight: "150px", fontFamily: "monospace" }}
+                  aria-label="cron.d/rsnapshot Rohtext"
+                />
+              </StackItem>
+            </Stack>
           </StackItem>
 
           <StackItem>
