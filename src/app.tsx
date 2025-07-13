@@ -1,5 +1,5 @@
 import '@patternfly/react-core/dist/styles/base.css';
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import parser from "cron-parser";
 import cockpit from "cockpit";
 import {
@@ -256,6 +256,10 @@ const App: React.FC = () => {
   const [lastBackupInfo, setLastBackupInfo] = useState<string>("");
 
   const [cronPreview, setCronPreview] = useState<{[key: string]: string}>({});
+
+  // NEU: Ref für Tab-Workaround im TextArea
+  const rawConfRef = useRef<HTMLTextAreaElement>(null);
+  const restRef = useRef<HTMLTextAreaElement>(null);
 
   // Configtest ausführen
   const runConfigTest = useCallback(() => {
@@ -525,6 +529,23 @@ const App: React.FC = () => {
     </span>
   );
 
+  const handleRestTab = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const target = e.target as HTMLTextAreaElement;
+      const start = target.selectionStart;
+      const end = target.selectionEnd;
+      const value = rest.join("\n");
+      const newValue = value.substring(0, start) + "\t" + value.substring(end);
+      setRest(newValue.split("\n"));
+      setTimeout(() => {
+        if (restRef.current) {
+          restRef.current.selectionStart = restRef.current.selectionEnd = start + 1;
+        }
+      }, 0);
+    }
+  };
+
   return (
     <Page>
       <PageSection>
@@ -597,6 +618,17 @@ const App: React.FC = () => {
               {successFlash && <Badge style={{marginLeft: 8}} isRead>Gespeichert</Badge>}
             </div>
             <Form>
+              <FormGroup label="Snapshot Root" fieldId="snapshot_root">
+                <FormHelperText>
+                  Verzeichnis, in dem die Backups gespeichert werden. Muss ein lokaler Pfad sein (kein Remote-Pfad, aber z.B. ein gemountetes NFS-Laufwerk ist möglich).
+                </FormHelperText>
+                <TextInput
+                  value={snapshotRoot}
+                  onChange={(_, v) => setSnapshotRoot(v)}
+                  aria-label="Snapshot Root"
+                  placeholder="/mnt/backup/storage/"
+                />
+              </FormGroup>
               <FormGroup label="Intervalle & Cronjobs" fieldId="intervals">
                 <FormHelperText>
                   Definiert, wie viele Snapshots pro Intervall gehalten werden und wann sie laufen. Sie können Intervalle hinzufügen oder entfernen.
@@ -774,9 +806,12 @@ const App: React.FC = () => {
                   Weitere Konfigurationszeilen, die nicht direkt unterstützt werden.
                 </FormHelperText>
                 <TextArea
+                  ref={restRef}
                   value={rest.join("\n")}
                   onChange={(_, v) => setRest(v.split("\n"))}
                   style={{ minHeight: "100px", fontFamily: "monospace" }}
+                  aria-label="Weitere Optionen Rohtext"
+                  onKeyDown={handleRestTab}
                 />
               </FormGroup>
             </Form>
@@ -802,11 +837,29 @@ const App: React.FC = () => {
                     </Button>
                   </Tooltip>
                 </div>
+                {/* TAB-WORKAROUND: onKeyDown für Tabulator */}
                 <TextArea
+                  ref={rawConfRef}
                   value={rawConf}
                   onChange={(_, v) => setRawConf(v)}
                   style={{ minHeight: "200px", fontFamily: "monospace" }}
                   aria-label="rsnapshot.conf Rohtext"
+                  onKeyDown={e => {
+                    if (e.key === "Tab") {
+                      e.preventDefault();
+                      const target = e.target as HTMLTextAreaElement;
+                      const start = target.selectionStart;
+                      const end = target.selectionEnd;
+                      setRawConf(
+                        rawConf.substring(0, start) + "\t" + rawConf.substring(end)
+                      );
+                      setTimeout(() => {
+                        if (rawConfRef.current) {
+                          rawConfRef.current.selectionStart = rawConfRef.current.selectionEnd = start + 1;
+                        }
+                      }, 0);
+                    }
+                  }}
                 />
               </StackItem>
               <StackItem>
