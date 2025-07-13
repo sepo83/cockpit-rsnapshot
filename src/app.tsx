@@ -63,13 +63,20 @@ function parseConfig(conf: string): {
   const intervalMap: Record<string, IntervalRow> = {};
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const commentIdx = trimmed.indexOf("#");
-    const cleanLine = commentIdx >= 0 ? trimmed.slice(0, commentIdx).trim() : trimmed;
-    if (cleanLine.startsWith("snapshot_root")) result.snapshot_root = cleanLine.split(/\s+/)[1] || "";
-    else if (cleanLine.startsWith("logfile")) result.logfile = cleanLine.split(/\s+/)[1] || "";
-    else if (cleanLine.startsWith("verbose")) result.verbose = cleanLine.split(/\s+/)[1] || "";
-    else if (/^(retain|interval)\s+/.test(cleanLine)) {
+    if (!trimmed) continue;
+
+    // Prüfe, ob die Zeile auskommentiert ist
+    const isCommented = trimmed.startsWith("#");
+    // Entferne ggf. das führende "#" für die weitere Analyse
+    const cleanLine = isCommented ? trimmed.slice(1).trim() : trimmed;
+
+    if (cleanLine.startsWith("snapshot_root")) {
+      result.snapshot_root = cleanLine.split(/\s+/)[1] || "";
+    } else if (cleanLine.startsWith("logfile")) {
+      result.logfile = cleanLine.split(/\s+/)[1] || "";
+    } else if (cleanLine.startsWith("verbose")) {
+      result.verbose = cleanLine.split(/\s+/)[1] || "";
+    } else if (/^(retain|interval)\s+/.test(cleanLine)) {
       const [, name, count] = cleanLine.split(/\s+/);
       if (name) {
         intervalMap[name] = {
@@ -77,16 +84,17 @@ function parseConfig(conf: string): {
           name,
           count,
           cronSyntax: "",
-          active: !trimmed.startsWith("#")
+          active: !isCommented
         };
       }
     } else if (cleanLine.startsWith("backup")) {
       const [, source, dest, ...opts] = cleanLine.split(/\s+/);
       result.backups.push({ source, dest, options: opts.join(" ") });
-     } else if (cleanLine) {
+    } else if (cleanLine) {
       result.rest.push(line);
     }
   }
+
   result.intervals = Object.values(intervalMap);
   if (result.intervals.length === 0) {
     result.intervals.push({
@@ -105,24 +113,32 @@ function parseCron(cron: string, intervals: IntervalRow[]): IntervalRow[] {
   intervals.forEach(i => {
     cronMap[i.name] = { cronSyntax: i.cronSyntax || "", active: false };
   });
+
   cron.split("\n").forEach(line => {
-    if (/^\s*#/.test(line)) return;
     const trimmed = line.trim();
+    if (!trimmed) return;
+
+    // Prüfe, ob die Zeile auskommentiert ist
+    const isCommented = trimmed.startsWith("#");
+    const cleanLine = isCommented ? trimmed.slice(1).trim() : trimmed;
+
     intervals.forEach(interval => {
-      if (trimmed.includes(`rsnapshot ${interval.name}`)) {
+      if (cleanLine.includes(`rsnapshot ${interval.name}`)) {
         cronMap[interval.name] = {
-          cronSyntax: trimmed.split(/\s+root/)[0].trim(),
-          active: true
+          cronSyntax: cleanLine.split(/\s+root/)[0].trim(),
+          active: !isCommented
         };
       }
     });
   });
+
   return intervals.map(i => ({
     ...i,
     cronSyntax: cronMap[i.name]?.cronSyntax || i.cronSyntax,
     active: cronMap[i.name]?.active ?? i.active
   }));
 }
+
 
 function serializeConfig(parsed: any, intervalRows: IntervalRow[]) {
   const lines: string[] = [];
@@ -660,26 +676,44 @@ const App: React.FC = () => {
                 <Table variant="compact" aria-label="Intervalle und Cronjobs">
                   <Thead>
                     <Tr>
-                      <Th>Aktiv</Th>
-                      <Th>Name</Th>
-                      <Th>Anzahl</Th>
-                      <Th>Cron-Syntax</Th>
-                      <Th></Th>
-                      <Th></Th>
-                      <Th></Th>
+                      <Th>
+                        <Tooltip content="Name des Intervalls, z.B. hourly, daily, weekly, monthly.">
+                          <span>Name</span>
+                        </Tooltip>
+                      </Th>
+                      <Th>
+                        <Tooltip content="Wie viele Backups dieses Intervalls sollen aufbewahrt werden?">
+                          <span>Anzahl</span>
+                        </Tooltip>
+                      </Th>
+                      <Th>
+                        <Tooltip content={
+                          <span>
+                            Wann soll das Intervall laufen? <br />
+                            Cron-Syntax, z.B. <code>0 * * * *</code> (jede Stunde), <code>30 3 * * *</code> (täglich 3:30 Uhr), <code>@daily</code>
+                          </span>
+                        }>
+                          <span>Cron-Syntax</span>
+                        </Tooltip>
+                      </Th>
+                      <Th>
+                        <Tooltip content={
+                          <span>
+                            Aktionen für dieses Intervall:<br />
+                            <b>Schalter:</b> Aktiv/Inaktiv<br />
+                            <b>Play:</b> Backup starten<br />
+                            <b>Dryrun:</b> Testlauf<br />
+                            <b>Mülleimer:</b> Intervall löschen
+                          </span>
+                        }>
+                          <span>Aktionen</span>
+                        </Tooltip>
+                      </Th>
                     </Tr>
                   </Thead>
                   <Tbody>
                     {intervalRows.map((row) => (
                       <Tr key={row.id}>
-                        <Td>
-                          <Switch
-                            id={`interval-active-${row.id}`}
-                            isChecked={row.active}
-                            onChange={checked => handleIntervalRow(row.id, "active", checked)}
-                            aria-label="Aktiv"
-                          />
-                        </Td>
                         <Td>
                           <TextInput
                             value={row.name}
@@ -701,19 +735,33 @@ const App: React.FC = () => {
                           )}
                         </Td>
                         <Td>
-                          <Tooltip content={cronErrors[row.id] ? cronTooltip : undefined}>
-                            <TextInput
-                              value={row.cronSyntax}
-                              onChange={(_, v) => handleIntervalRow(row.id, "cronSyntax", v)}
-                              aria-label="Cron-Syntax"
-                              validated={cronErrors[row.id] ? "error" : "default"}
-                            />
-                          </Tooltip>
-                          {cronPreview[row.id] && (
-                            <div style={{fontSize: "0.9em", color: "#555", marginTop: 4}}>{cronPreview[row.id]}</div>
+                          <TextInput
+                            value={row.cronSyntax}
+                            onChange={(_, v) => handleIntervalRow(row.id, "cronSyntax", v)}
+                            aria-label="Cron-Syntax"
+                            validated={cronErrors[row.id] ? "error" : "default"}
+                            placeholder='0 0 * * *'
+                          />
+                          {cronErrors[row.id] ? (
+                            <FormHelperText className="pf-m-error" style={{ color: "#c9190b", marginTop: 4 }}>
+                              Ungültige Cron-Syntax. Beispiele siehe Tooltip
+                            </FormHelperText>
+                          ) : (
+                            cronPreview[row.id] && (
+                              <div style={{ fontSize: "0.9em", color: "#555", marginTop: 4 }}>{cronPreview[row.id]}</div>
+                            )
                           )}
                         </Td>
                         <Td>
+                          <Tooltip content={row.active ? "Intervall deaktivieren" : "Intervall aktivieren"}>
+                            <Switch
+                              id={`interval-active-${row.id}`}
+                              isChecked={row.active}
+                              onChange={(_,checked) => handleIntervalRow(row.id, "active", checked)}
+                              aria-label="Aktiv"
+                              style={{marginRight: 8, verticalAlign: "middle"}}
+                            />
+                          </Tooltip>
                           <Tooltip
                             content={playButtonStates[row.id]?.enabled
                               ? "Backup für dieses Intervall starten"
@@ -736,7 +784,6 @@ const App: React.FC = () => {
                                         { title: `Backup abgeschlossen (${row.name})`, variant: "success" }
                                       ]);
                                     })
-
                                     .catch(error => {
                                       setOutput(prev =>
                                         prev +
@@ -754,8 +801,6 @@ const App: React.FC = () => {
                               </Button>
                             </span>
                           </Tooltip>
-                        </Td>
-                        <Td>
                           <Tooltip
                             content={
                               playButtonStates[row.id]?.enabled
@@ -793,15 +838,25 @@ const App: React.FC = () => {
                               </Button>
                             </span>
                           </Tooltip>
-                        </Td>
-                        <Td>
-                          <Button variant="plain" aria-label="Intervall entfernen" isDisabled={intervalRows.length <= 1}
-                            onClick={() => removeInterval(row.id)}><MinusCircleIcon /></Button>
+                          <Tooltip content="Intervall entfernen">
+                            <span>
+                              <Button
+                                variant="plain"
+                                aria-label="Intervall entfernen"
+                                isDisabled={intervalRows.length <= 1}
+                                onClick={() => removeInterval(row.id)}
+                              >
+                                <MinusCircleIcon />
+                              </Button>
+                            </span>
+                          </Tooltip>
                         </Td>
                       </Tr>
                     ))}
                   </Tbody>
                 </Table>
+
+
                 <Button variant="link" icon={<PlusIcon />} onClick={addInterval}>Intervall hinzufügen</Button>
               </FormGroup>
               <FormGroup label="Backup-Jobs" fieldId="backups">
