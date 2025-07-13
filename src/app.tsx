@@ -9,7 +9,7 @@ import {
 import {
   Table, Thead, Tbody, Tr, Th, Td
 } from '@patternfly/react-table';
-import { SyncAltIcon, SaveIcon, SearchIcon, PlusIcon, MinusCircleIcon, PlayIcon, PlayCircleIcon } from '@patternfly/react-icons';
+import { SyncAltIcon, SaveIcon, PlusIcon, MinusCircleIcon, PlayIcon, PlayCircleIcon, CheckIcon } from '@patternfly/react-icons';
 import "./app.scss";
 
 type IntervalRow = {
@@ -194,7 +194,7 @@ function getNextCronRun(cron: string): string {
 }
 
 function hasSudoRights(): Promise<boolean> {
-  return cockpit.spawn(["sudo", "-n", "true"]).then(() => true).catch(() => false);
+  return cockpit.spawn(["true"], { superuser: "require" }).then(() => true).catch(() => false);
 }
 
 function isValidBackupJob(b: BackupJob): boolean {
@@ -256,6 +256,27 @@ const App: React.FC = () => {
   const [lastBackupInfo, setLastBackupInfo] = useState<string>("");
 
   const [cronPreview, setCronPreview] = useState<{[key: string]: string}>({});
+
+  // Configtest ausführen
+  const runConfigTest = useCallback(() => {
+    setOutput(prev => prev + "Starte rsnapshot configtest...\n");
+    cockpit.spawn(["rsnapshot", "configtest"], { superuser: "require", err: "message" })
+      .then(data => {
+        setOutput(prev => prev + data + "\n");
+        setAlerts(alerts => [...alerts, { title: "Configtest erfolgreich", variant: "success" }]);
+      })
+      .catch(error => {
+        setOutput(prev =>
+          prev +
+          "Fehler beim configtest: " +
+          (error?.message || "") +
+          (error?.problem ? "\n" + error.problem : "") +
+          (error?.stderr ? "\n" + error.stderr : "") +
+          "\n"
+        );
+        setAlerts(alerts => [...alerts, { title: "Fehler beim Configtest – Details siehe Log unten", variant: "danger" }]);
+      });
+  }, []);
 
   // Gemeinsames Laden und Mergen!
   const loadAll = useCallback(() => {
@@ -343,6 +364,7 @@ const App: React.FC = () => {
         setSuccessFlash(true);
         loadAll();
         setTimeout(() => setSuccessFlash(false), 1000);
+        runConfigTest();
       })
       .catch(error => {
         setAlerts(alerts => [
@@ -353,7 +375,7 @@ const App: React.FC = () => {
       .finally(() => setIsSavingConfig(false));
   }
 
-  const saveRawConf = () => {
+  const saveRawConf = useCallback(() => {
     setIsSavingRawConf(true);
     cockpit.file(CONF_PATH, { superuser: "require" }).replace(rawConf)
       .then(() => {
@@ -367,9 +389,9 @@ const App: React.FC = () => {
         ]);
       })
       .finally(() => setIsSavingRawConf(false));
-  };
+  }, [rawConf, loadAll]);
 
-  const saveRawCron = () => {
+  const saveRawCron = useCallback(() => {
     setIsSavingRawCron(true);
     cockpit.file(CRON_PATH, { superuser: "require" }).replace(rawCron)
       .then(() =>
@@ -389,7 +411,7 @@ const App: React.FC = () => {
         ]);
       })
       .finally(() => setIsSavingRawCron(false));
-  };
+  }, [rawCron, loadAll]);
 
   useEffect(() => {
     const preview: {[key: string]: string} = {};
@@ -401,10 +423,8 @@ const App: React.FC = () => {
       }
     });
     setCronPreview(preview);
-    // eslint-disable-next-line
   }, [intervalRows]);
 
-  // Prüfe für jeden Intervall, ob er exakt in beiden Configs aktiv ist
   const playButtonStates = useMemo(() => {
     const retainMap = getActiveRetainMap(rawConf);
     const cronMap = getActiveCronMap(rawCron);
@@ -444,7 +464,6 @@ const App: React.FC = () => {
         row.id === id ? { ...row, [field]: value } : row
       )
     );
-    const idx = intervalRows.findIndex(r => r.id === id);
     if (field === "cronSyntax") {
       setCronErrors(errors => ({
         ...errors,
@@ -457,9 +476,9 @@ const App: React.FC = () => {
         [id]: isValidCount(value) || value === "" ? undefined : "Nur positive ganze Zahl erlaubt"
       }));
     }
-  }, [intervalRows]);
+  }, []);
 
-  const addInterval = () => {
+  const addInterval = useCallback(() => {
     setIntervalRows(rows => [
       ...rows,
       {
@@ -470,11 +489,11 @@ const App: React.FC = () => {
         active: false
       }
     ]);
-  };
+  }, []);
 
-  const removeInterval = (id: string) => {
+  const removeInterval = useCallback((id: string) => {
     setIntervalRows(rows => rows.length > 1 ? rows.filter(row => row.id !== id) : rows);
-  };
+  }, []);
 
   const handleBackup = useCallback((idx: number, field: keyof BackupJob, value: string) => {
     setBackups((prev: BackupJob[]) => {
@@ -496,7 +515,6 @@ const App: React.FC = () => {
   const addExclude = useCallback(() => setExcludes(prev => [...prev, ""]), []);
   const removeExclude = useCallback((idx: number) => setExcludes(prev => prev.filter((_, i) => i !== idx)), []);
 
-  // Tooltip für Cron-Syntax
   const cronTooltip = (
     <span>
       Ungültige Cron-Syntax.<br />
@@ -563,6 +581,17 @@ const App: React.FC = () => {
                   style={{marginLeft: "0.2em"}}
                 >
                   {isSavingConfig ? <Spinner size="sm" /> : <SaveIcon />}
+                </Button>
+              </Tooltip>
+              <Tooltip content="Konfiguration testen (rsnapshot configtest)">
+                <Button
+                  variant="plain"
+                  aria-label="Konfiguration testen"
+                  onClick={runConfigTest}
+                  isDisabled={!rsnapshotAvailable || !sudoAvailable}
+                  style={{marginLeft: "0.2em"}}
+                >
+                  <CheckIcon />
                 </Button>
               </Tooltip>
               {successFlash && <Badge style={{marginLeft: 8}} isRead>Gespeichert</Badge>}
@@ -640,11 +669,24 @@ const App: React.FC = () => {
                                 aria-label="Backup starten"
                                 isDisabled={!playButtonStates[row.id]?.enabled || !rsnapshotAvailable || !sudoAvailable}
                                 onClick={() => {
-                                  setOutput(`Starte rsnapshot-Backup (${row.name})...\n`);
-                                  cockpit.spawn(["sudo", "rsnapshot", row.name])
+                                  setOutput(prev => prev + `Starte rsnapshot-Backup (${row.name})...\n`);
+                                  cockpit.spawn(["rsnapshot", row.name], { superuser: "require", err: "message" })
                                     .stream(data => setOutput(prev => prev + data))
-                                    .then(() => setOutput(prev => prev + "\nBackup abgeschlossen.\n"))
-                                    .catch(error => setOutput(prev => prev + "\nFehler beim Backup: " + (error?.message || JSON.stringify(error)) + "\n"));
+                                    .then(() => {
+                                      setOutput(prev => prev + "\nBackup abgeschlossen.\n");
+                                      setAlerts(alerts => [...alerts, { title: `Backup gestartet (${row.name})`, variant: "success" }]);
+                                    })
+                                    .catch(error => {
+                                      setOutput(prev =>
+                                        prev +
+                                        "Fehler beim Backup: " +
+                                        (error?.message || "") +
+                                        (error?.problem ? "\n" + error.problem : "") +
+                                        (error?.stderr ? "\n" + error.stderr : "") +
+                                        "\n"
+                                      );
+                                      setAlerts(alerts => [...alerts, { title: `Fehler beim Backup (${row.name}) – Details siehe Log unten`, variant: "danger" }]);
+                                    });
                                 }}
                               >
                                 <PlayIcon />
@@ -666,11 +708,24 @@ const App: React.FC = () => {
                                 aria-label="Dryrun"
                                 isDisabled={!playButtonStates[row.id]?.enabled || !rsnapshotAvailable || !sudoAvailable}
                                 onClick={() => {
-                                  setOutput(`Starte Testlauf (dry-run) für rsnapshot ${row.name}...\n`);
-                                  cockpit.spawn(["sudo", "rsnapshot", "-t", row.name])
+                                  setOutput(prev => prev + `Starte Testlauf (dry-run) für rsnapshot ${row.name}...\n`);
+                                  cockpit.spawn(["rsnapshot", "-t", row.name], { superuser: "require", err: "message" })
                                     .stream(data => setOutput(prev => prev + data))
-                                    .then(() => setOutput(prev => prev + "\nTestlauf abgeschlossen.\n"))
-                                    .catch(error => setOutput(prev => prev + "\nFehler beim Testlauf: " + (error?.message || JSON.stringify(error)) + "\n"));
+                                    .then(() => {
+                                      setOutput(prev => prev + "\nTestlauf abgeschlossen.\n");
+                                      setAlerts(alerts => [...alerts, { title: `Testlauf erfolgreich (${row.name})`, variant: "success" }]);
+                                    })
+                                    .catch(error => {
+                                      setOutput(prev =>
+                                        prev +
+                                        "Fehler beim Testlauf: " +
+                                        (error?.message || "") +
+                                        (error?.problem ? "\n" + error.problem : "") +
+                                        (error?.stderr ? "\n" + error.stderr : "") +
+                                        "\n"
+                                      );
+                                      setAlerts(alerts => [...alerts, { title: `Fehler beim Testlauf (${row.name}) – Details siehe Log unten`, variant: "danger" }]);
+                                    });
                                 }}
                               >
                                 <PlayCircleIcon />
@@ -688,7 +743,6 @@ const App: React.FC = () => {
                 </Table>
                 <Button variant="link" icon={<PlusIcon />} onClick={addInterval}>Intervall hinzufügen</Button>
               </FormGroup>
-              {/* ... Rest wie gehabt ... */}
               <FormGroup label="Backup-Jobs" fieldId="backups">
                 <FormHelperText>
                   Definiert, welche Verzeichnisse gesichert werden.
@@ -727,7 +781,6 @@ const App: React.FC = () => {
               </FormGroup>
             </Form>
           </StackItem>
-          {/* ... Rest wie gehabt ... */}
           <StackItem>
             <Title headingLevel="h2" size="md" style={{marginTop: "2em"}}>Manuelle Bearbeitung</Title>
             <Stack hasGutter>
