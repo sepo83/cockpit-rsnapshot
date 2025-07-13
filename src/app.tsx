@@ -250,7 +250,7 @@ const App: React.FC = () => {
               <Button variant="secondary" onClick={showConfig} isDisabled={!rsnapshotAvailable}>Konfiguration anzeigen</Button>
             </ToolbarItem>
             <ToolbarItem>
-              <Button variant="success" onClick={saveConfig} isDisabled={!configLoaded || !rsnapshotAvailable}>Konfiguration speichern</Button>
+              <Button variant="primary" onClick={saveConfig} isDisabled={!configLoaded || !rsnapshotAvailable}>Konfiguration speichern</Button>
             </ToolbarItem>
             <ToolbarItem>
               <Button variant="secondary" onClick={showLog} isDisabled={!rsnapshotAvailable}>Log anzeigen</Button>
@@ -278,8 +278,7 @@ const App: React.FC = () => {
               <FormGroup label="Stündlich (hourly)" fieldId="cron-hourly">
                 <Switch
                   id="cron-hourly"
-                  label="Aktiv"
-                  labelOff="Inaktiv"
+                  aria-label="Stündlich (hourly)"
                   isChecked={cronSettings.hourly}
                   onChange={checked => handleCronChange("hourly", checked)}
                 />
@@ -296,8 +295,7 @@ const App: React.FC = () => {
               <FormGroup label="Täglich (daily)" fieldId="cron-daily">
                 <Switch
                   id="cron-daily"
-                  label="Aktiv"
-                  labelOff="Inaktiv"
+                  aria-label="Täglich (daily)"
                   isChecked={cronSettings.daily}
                   onChange={checked => handleCronChange("daily", checked)}
                 />
@@ -314,8 +312,7 @@ const App: React.FC = () => {
               <FormGroup label="Wöchentlich (weekly)" fieldId="cron-weekly">
                 <Switch
                   id="cron-weekly"
-                  label="Aktiv"
-                  labelOff="Inaktiv"
+                  aria-label="Wöchentlich (weekly)"
                   isChecked={cronSettings.weekly}
                   onChange={checked => handleCronChange("weekly", checked)}
                 />
@@ -332,8 +329,7 @@ const App: React.FC = () => {
               <FormGroup label="Monatlich (monthly)" fieldId="cron-monthly">
                 <Switch
                   id="cron-monthly"
-                  label="Aktiv"
-                  labelOff="Inaktiv"
+                  aria-label="Monatlich (monthly)"
                   isChecked={cronSettings.monthly}
                   onChange={checked => handleCronChange("monthly", checked)}
                 />
