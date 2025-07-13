@@ -22,7 +22,7 @@ import {
   Tooltip,
   Spinner
 } from "@patternfly/react-core";
-import { SyncAltIcon, InfoCircleIcon } from '@patternfly/react-icons';
+import { SyncAltIcon, InfoCircleIcon, SaveIcon } from '@patternfly/react-icons';
 import "./app.scss";
 
 type CronSettings = {
@@ -81,7 +81,6 @@ const App: React.FC = () => {
   const [cronLoaded, setCronLoaded] = useState(false);
   const [cronSaved, setCronSaved] = useState(false);
   const [isSavingCron, setIsSavingCron] = useState(false);
-  const [cronFileContent, setCronFileContent] = useState<string>("");
 
   // Fehlerstatus für Cron-Zeitfelder
   const [cronErrors, setCronErrors] = useState<{
@@ -94,6 +93,11 @@ const App: React.FC = () => {
   // Für die Prüfung: Sind alle aktivierten Cronjobs auch in der Konfiguration vorhanden?
   const [confIntervals, setConfIntervals] = useState<string[]>([]);
   const [cronConfMismatch, setCronConfMismatch] = useState<string[]>([]);
+
+  // Raw-Editing für /etc/cron.d/rsnapshot
+  const [cronRawContent, setCronRawContent] = useState<string>("");
+  const [cronRawLoaded, setCronRawLoaded] = useState(false);
+  const [isSavingCronRaw, setIsSavingCronRaw] = useState(false);
 
   // === Initial-Laden ===
   useEffect(() => {
@@ -224,13 +228,15 @@ const App: React.FC = () => {
         }
         setCronSettings(settings);
         setCronLoaded(true);
-        setCronFileContent(data);
+        setCronRawContent(data);
+        setCronRawLoaded(true);
         setCronErrors({});
       })
       .catch(() => {
         setCronSettings(defaultCronSettings);
         setCronLoaded(true);
-        setCronFileContent("");
+        setCronRawContent("");
+        setCronRawLoaded(true);
         setCronErrors({});
       });
   };
@@ -273,6 +279,23 @@ const App: React.FC = () => {
         ]);
       })
       .finally(() => setIsSavingCron(false));
+  };
+
+  // Raw-Editing für /etc/cron.d/rsnapshot
+  const saveCronRaw = () => {
+    setIsSavingCronRaw(true);
+    cockpit.file(CRON_PATH, { superuser: "require" }).replace(cronRawContent)
+      .then(() => {
+        setAlerts(alerts => [...alerts, {title: "Cron-Datei gespeichert", variant: "success"}]);
+        loadCron();
+      })
+      .catch(error => {
+        setAlerts(alerts => [
+          ...alerts,
+          {title: "Fehler beim Speichern der Cron-Datei: " + (error?.message || JSON.stringify(error)), variant: "danger"}
+        ]);
+      })
+      .finally(() => setIsSavingCronRaw(false));
   };
 
   // Switch-Handler für Cron-Intervalle (Checkboxen)
@@ -360,15 +383,6 @@ const App: React.FC = () => {
               <Button variant="primary" onClick={runBackup} isDisabled={!rsnapshotAvailable}>Backup starten</Button>
             </ToolbarItem>
             <ToolbarItem>
-              <Button
-                variant="primary"
-                onClick={saveConfig}
-                isDisabled={!configLoaded || !rsnapshotAvailable || isSavingConfig}
-              >
-                {isSavingConfig ? <Spinner size="sm" /> : "Konfiguration speichern"}
-              </Button>
-            </ToolbarItem>
-            <ToolbarItem>
               <Button variant="secondary" onClick={showLog} isDisabled={!rsnapshotAvailable}>Log anzeigen</Button>
             </ToolbarItem>
           </ToolbarContent>
@@ -379,6 +393,17 @@ const App: React.FC = () => {
               <strong>rsnapshot Konfiguration:</strong>
               <Tooltip content="Konfiguration neu laden">
                 <SyncAltIcon className="conf-reload" onClick={loadConfig} />
+              </Tooltip>
+              <Tooltip content="Konfiguration speichern">
+                <Button
+                  variant="plain"
+                  aria-label="Konfiguration speichern"
+                  onClick={saveConfig}
+                  isDisabled={!configLoaded || !rsnapshotAvailable || isSavingConfig}
+                  style={{marginLeft: "0.2em"}}
+                >
+                  {isSavingConfig ? <Spinner size="sm" /> : <SaveIcon />}
+                </Button>
               </Tooltip>
             </div>
             <TextArea
@@ -391,7 +416,25 @@ const App: React.FC = () => {
             />
           </StackItem>
           <StackItem>
-            <Title headingLevel="h2" size="md">Automatische Backups (Cronjobs)</Title>
+            <div className="conf-header">
+              <Title headingLevel="h2" size="md" style={{margin: 0}}>Automatische Backups (Cronjobs)</Title>
+              <Tooltip content="Cronjobs neu laden">
+                <SyncAltIcon className="conf-reload" onClick={loadCron} />
+              </Tooltip>
+              <Tooltip content={cronHasErrors ? "Bitte korrigieren Sie die Cron-Syntax-Fehler." : "Cronjobs speichern"}>
+                <span>
+                  <Button
+                    variant="plain"
+                    aria-label="Cronjobs speichern"
+                    onClick={saveCron}
+                    isDisabled={cronHasErrors || isSavingCron}
+                    style={{marginLeft: "0.2em"}}
+                  >
+                    {isSavingCron ? <Spinner size="sm" /> : <SaveIcon />}
+                  </Button>
+                </span>
+              </Tooltip>
+            </div>
             {cronConfMismatch.length > 0 && (
               <Alert
                 title="Achtung: Cronjobs und rsnapshot-Konfiguration passen nicht zusammen"
@@ -532,38 +575,38 @@ const App: React.FC = () => {
                   <FormHelperText isError>{cronErrors.monthlyTime}</FormHelperText>
                 )}
               </FormGroup>
-              <Tooltip
-                content={cronHasErrors ? "Bitte korrigieren Sie die Cron-Syntax-Fehler." : ""}
-                isVisible={cronHasErrors}
-              >
-                <span>
-                  <Button
-                    variant="primary"
-                    onClick={saveCron}
-                    isDisabled={cronHasErrors || isSavingCron}
-                  >
-                    {isSavingCron ? <Spinner size="sm" /> : "Cronjobs speichern"}
-                  </Button>
-                </span>
-              </Tooltip>
-              <Button
-                variant="secondary"
-                style={{marginLeft: "0.5em"}}
-                onClick={loadCron}
-                isDisabled={isSavingCron}
-              >
-                Cronjobs neu laden
-              </Button>
             </Form>
-            {cronLoaded && (
-              <div style={{marginTop: "1em"}}>
-                <strong>Aktuelle /etc/cron.d/rsnapshot:</strong>
-                <pre style={{padding: "1em", border: "1px solid #ccc", minHeight: "100px"}}>
-                  {cronFileContent}
-                </pre>
-              </div>
-            )}
           </StackItem>
+
+          {/* Nur noch das Bearbeiten der Datei, keine Anzeige mehr */}
+          <StackItem>
+            <div className="conf-header">
+              <strong>/etc/cron.d/rsnapshot bearbeiten:</strong>
+              <Tooltip content="Cron-Datei neu laden">
+                <SyncAltIcon className="conf-reload" onClick={loadCron} />
+              </Tooltip>
+              <Tooltip content="Cron-Datei speichern">
+                <Button
+                  variant="plain"
+                  aria-label="Cron-Datei speichern"
+                  onClick={saveCronRaw}
+                  isDisabled={!cronRawLoaded || isSavingCronRaw}
+                  style={{marginLeft: "0.2em"}}
+                >
+                  {isSavingCronRaw ? <Spinner size="sm" /> : <SaveIcon />}
+                </Button>
+              </Tooltip>
+            </div>
+            <TextArea
+              value={cronRawContent}
+              onChange={(_event, value) => setCronRawContent(value)}
+              style={{ minHeight: "150px", fontFamily: "monospace" }}
+              placeholder="Hier erscheint die /etc/cron.d/rsnapshot"
+              isDisabled={!rsnapshotAvailable || !cronRawLoaded}
+              aria-label="rsnapshot Cron-Datei"
+            />
+          </StackItem>
+
           <StackItem>
             <strong>Ausgabe / Log:</strong>
             <pre style={{padding: "1em", border: "1px solid #ccc", minHeight: "100px"}}>{output}</pre>
