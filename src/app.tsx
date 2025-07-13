@@ -1,6 +1,6 @@
 import '@patternfly/react-core/dist/styles/base.css';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import parser from "cron-parser";
+import { CronExpressionParser } from "cron-parser";
 import cockpit from "cockpit";
 import {
   Page, PageSection, Title, Button, TextArea, Alert, AlertGroup, Stack, StackItem,
@@ -183,13 +183,13 @@ function getNextCronRun(cron: string): string {
     };
     const cronExpr = shortcutMap[cron.trim()] || cron;
     if (!cronExpr) return "Wird beim Systemstart ausgeführt";
-    const interval = parser.parseExpression(cronExpr, {
+    const interval = CronExpressionParser.parse(cronExpr, {
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone
     });
     const next = interval.next();
     return "Nächster Lauf: " + next.toDate().toLocaleString();
   } catch (e) {
-    return "";
+    return "Fehler: " + e;
   }
 }
 
@@ -751,8 +751,13 @@ const App: React.FC = () => {
                                     .stream(data => setOutput(prev => prev + data))
                                     .then(() => {
                                       setOutput(prev => prev + "\nBackup abgeschlossen.\n");
-                                      setAlerts(alerts => [...alerts, { title: `Backup gestartet (${row.name})`, variant: "success" }]);
+                                      setAlerts(alerts => [
+                                        ...alerts,
+                                        { title: `Backup gestartet (${row.name})`, variant: "success" },
+                                        { title: `Backup abgeschlossen (${row.name})`, variant: "success" }
+                                      ]);
                                     })
+
                                     .catch(error => {
                                       setOutput(prev =>
                                         prev +
@@ -822,18 +827,51 @@ const App: React.FC = () => {
               </FormGroup>
               <FormGroup label="Backup-Jobs" fieldId="backups">
                 <FormHelperText>
-                  Definiert, welche Verzeichnisse gesichert werden.
+                  Definiert, welche Verzeichnisse gesichert werden. <br />
+                  <b>Quelle</b>: Das Quellverzeichnis (z.B. <code>/home/</code>)<br />
+                  <b>Ziel</b>: Das Ziel (meist <code>localhost/</code> oder ein anderer Host)<br />
+                  <b>Optionen</b>: Zusätzliche rsync-Optionen (optional)
                 </FormHelperText>
-                {backups.map((b, idx) => (
-                  <div key={idx} style={{display: "flex", gap: 8, marginBottom: 4}}>
-                    <TextInput value={b.source} onChange={(_, v) => handleBackup(idx, "source", v)} placeholder="Quelle" />
-                    <TextInput value={b.dest} onChange={(_, v) => handleBackup(idx, "dest", v)} placeholder="Ziel" />
-                    <TextInput value={b.options} onChange={(_, v) => handleBackup(idx, "options", v)} placeholder="Optionen" />
-                    <Button variant="plain" aria-label="Backup entfernen" onClick={() => removeBackup(idx)}>✕</Button>
-                  </div>
-                ))}
+                <Table variant="compact" aria-label="Backup-Jobs">
+                  <Thead>
+                    <Tr>
+                      <Th>
+                        <Tooltip content="Das Quellverzeichnis, das gesichert werden soll."/>
+                        Quelle
+                      </Th>
+                      <Th>
+                        <Tooltip content="Das Ziel (meist 'localhost/' oder ein anderer Host)."/>
+                        Ziel
+                      </Th>
+                      <Th>
+                        <Tooltip content="Optionale rsync-Optionen, z.B. --exclude oder --link-dest."/>
+                        Optionen
+                      </Th>
+                      <Th></Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {backups.map((b, idx) => (
+                      <Tr key={idx}>
+                        <Td>
+                          <TextInput value={b.source} onChange={(_, v) => handleBackup(idx, "source", v)} placeholder="z.B. /home/" />
+                        </Td>
+                        <Td>
+                          <TextInput value={b.dest} onChange={(_, v) => handleBackup(idx, "dest", v)} placeholder="z.B. localhost/" />
+                        </Td>
+                        <Td>
+                          <TextInput value={b.options} onChange={(_, v) => handleBackup(idx, "options", v)} placeholder="z.B. --exclude=tmp/" />
+                        </Td>
+                        <Td>
+                          <Button variant="plain" aria-label="Backup entfernen" onClick={() => removeBackup(idx)}>✕</Button>
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
                 <Button variant="link" onClick={addBackup}>Backup hinzufügen</Button>
               </FormGroup>
+
               <FormGroup label="Ausschlüsse (exclude/exclude_file)" fieldId="excludes">
                 <FormHelperText>
                   Dateien/Verzeichnisse, die vom Backup ausgeschlossen werden sollen.
