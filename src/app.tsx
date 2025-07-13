@@ -19,6 +19,8 @@ import {
   TextInput
 } from "@patternfly/react-core";
 import "./app.scss";
+import '@patternfly/react-core/dist/styles/base.css';
+
 
 type CronSettings = {
   hourly: boolean;
