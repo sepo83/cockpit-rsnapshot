@@ -1,5 +1,6 @@
 import '@patternfly/react-core/dist/styles/base.css';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { ExpandableSection } from "@patternfly/react-core";
 import { CronExpressionParser } from "cron-parser";
 import cockpit from "cockpit";
 import {
@@ -46,7 +47,6 @@ function parseConfig(conf: string): {
   verbose: string;
   intervals: IntervalRow[];
   backups: BackupJob[];
-  excludes: string[];
   rest: string[];
   rawLines: string[];
 } {
@@ -57,7 +57,6 @@ function parseConfig(conf: string): {
     verbose: "",
     intervals: [] as IntervalRow[],
     backups: [] as BackupJob[],
-    excludes: [] as string[],
     rest: [] as string[],
     rawLines: lines
   };
@@ -84,11 +83,7 @@ function parseConfig(conf: string): {
     } else if (cleanLine.startsWith("backup")) {
       const [, source, dest, ...opts] = cleanLine.split(/\s+/);
       result.backups.push({ source, dest, options: opts.join(" ") });
-    } else if (cleanLine.startsWith("exclude")) {
-      result.excludes.push(cleanLine.replace(/^exclude\s+/, ""));
-    } else if (cleanLine.startsWith("exclude_file")) {
-      result.excludes.push("file:" + cleanLine.replace(/^exclude_file\s+/, ""));
-    } else if (cleanLine) {
+     } else if (cleanLine) {
       result.rest.push(line);
     }
   }
@@ -142,9 +137,6 @@ function serializeConfig(parsed: any, intervalRows: IntervalRow[]) {
   });
   parsed.backups.forEach((b: BackupJob) => {
     if (b.source && b.dest) lines.push(`backup\t${b.source}\t${b.dest}\t${b.options}`);
-  });
-  parsed.excludes.forEach((e: string) => {
-    if (e) lines.push(e.startsWith("file:") ? `exclude_file\t${e.slice(5)}` : `exclude\t${e}`);
   });
   if (parsed.rest.length) lines.push(...parsed.rest);
   return lines.join("\n");
@@ -247,7 +239,6 @@ const App: React.FC = () => {
   const [cronErrors, setCronErrors] = useState<{[key: string]: string|undefined}>({});
   const [countErrors, setCountErrors] = useState<{[key: string]: string|undefined}>({});
   const [backups, setBackups] = useState<BackupJob[]>([]);
-  const [excludes, setExcludes] = useState<string[]>([]);
   const [rest, setRest] = useState<string[]>([]);
 
   const [rawConf, setRawConf] = useState("");
@@ -330,7 +321,6 @@ const App: React.FC = () => {
       setLogfile(parsedConfig.logfile);
       setVerbose(parsedConfig.verbose);
       setBackups(parsedConfig.backups.filter(isValidBackupJob));
-      setExcludes(parsedConfig.excludes.filter(e => e));
       setRest(parsedConfig.rest);
 
       // Intervalle aus Cron mergen
@@ -383,7 +373,6 @@ const App: React.FC = () => {
       verbose,
       intervals: {},
       backups: backups.filter(isValidBackupJob),
-      excludes: excludes.filter(e => e),
       rest
     };
     intervalRows.forEach(row => {
@@ -547,16 +536,6 @@ const App: React.FC = () => {
   }, []);
   const addBackup = useCallback(() => setBackups(prev => [...prev, { source: "", dest: "", options: "" }]), []);
   const removeBackup = useCallback((idx: number) => setBackups(prev => prev.filter((_, i) => i !== idx)), []);
-
-  const handleExclude = useCallback((idx: number, value: string) => {
-    setExcludes((prev: string[]) => {
-      const copy = [...prev];
-      copy[idx] = value;
-      return copy;
-    });
-  }, []);
-  const addExclude = useCallback(() => setExcludes(prev => [...prev, ""]), []);
-  const removeExclude = useCallback((idx: number) => setExcludes(prev => prev.filter((_, i) => i !== idx)), []);
 
   const cronTooltip = (
     <span>
@@ -827,25 +806,25 @@ const App: React.FC = () => {
               </FormGroup>
               <FormGroup label="Backup-Jobs" fieldId="backups">
                 <FormHelperText>
-                  Definiert, welche Verzeichnisse gesichert werden. <br />
-                  <b>Quelle</b>: Das Quellverzeichnis (z.B. <code>/home/</code>)<br />
-                  <b>Ziel</b>: Das Ziel (meist <code>localhost/</code> oder ein anderer Host)<br />
-                  <b>Optionen</b>: Zusätzliche rsync-Optionen (optional)
+                  Definiert, welche Verzeichnisse gesichert werden. 
                 </FormHelperText>
                 <Table variant="compact" aria-label="Backup-Jobs">
                   <Thead>
                     <Tr>
                       <Th>
-                        <Tooltip content="Das Quellverzeichnis, das gesichert werden soll."/>
-                        Quelle
+                        <Tooltip content="Das Quellverzeichnis, das gesichert werden soll.">
+                          <span>Quelle</span>
+                        </Tooltip>
                       </Th>
                       <Th>
-                        <Tooltip content="Das Ziel (meist 'localhost/' oder ein anderer Host)."/>
-                        Ziel
+                        <Tooltip content="Das Ziel (meist 'localhost/' oder ein anderer Host).">
+                          <span>Ziel</span>
+                        </Tooltip>
                       </Th>
                       <Th>
-                        <Tooltip content="Optionale rsync-Optionen, z.B. --exclude oder --link-dest."/>
-                        Optionen
+                        <Tooltip content="Optionale rsync-Optionen, z.B. --exclude oder --link-dest.">
+                          <span>Optionen</span>
+                        </Tooltip>
                       </Th>
                       <Th></Th>
                     </Tr>
@@ -871,19 +850,6 @@ const App: React.FC = () => {
                 </Table>
                 <Button variant="link" onClick={addBackup}>Backup hinzufügen</Button>
               </FormGroup>
-
-              <FormGroup label="Ausschlüsse (exclude/exclude_file)" fieldId="excludes">
-                <FormHelperText>
-                  Dateien/Verzeichnisse, die vom Backup ausgeschlossen werden sollen.
-                </FormHelperText>
-                {excludes.map((e, idx) => (
-                  <div key={idx} style={{display: "flex", alignItems: "center", marginBottom: 4}}>
-                    <TextInput value={e} onChange={(_, v) => handleExclude(idx, v)} />
-                    <Button variant="plain" aria-label="Exclude entfernen" onClick={() => removeExclude(idx)}>✕</Button>
-                  </div>
-                ))}
-                <Button variant="link" onClick={addExclude}>Ausschluss hinzufügen</Button>
-              </FormGroup>
               <FormGroup label="Weitere Optionen (Rohtext)" fieldId="rest">
                 <FormHelperText>
                   Weitere Konfigurationszeilen, die nicht direkt unterstützt werden.
@@ -900,91 +866,93 @@ const App: React.FC = () => {
             </Form>
           </StackItem>
           <StackItem>
-            <Title headingLevel="h2" size="md" style={{marginTop: "2em"}}>Manuelle Bearbeitung</Title>
-            <Stack hasGutter>
-              <StackItem>
-                <div className="conf-header">
-                  <strong>rsnapshot.conf (Rohtext):</strong>
-                  <Tooltip content="Neu laden">
-                    <SyncAltIcon className="conf-reload" onClick={loadAll} />
-                  </Tooltip>
-                  <Tooltip content="Speichern">
-                    <Button
-                      variant="plain"
-                      aria-label="rsnapshot.conf speichern"
-                      onClick={saveRawConf}
-                      isDisabled={isSavingRawConf}
-                      style={{marginLeft: "0.2em"}}
-                    >
-                      {isSavingRawConf ? <Spinner size="sm" /> : <SaveIcon />}
-                    </Button>
-                  </Tooltip>
-                </div>
-                <TextArea
-                  ref={rawConfRef}
-                  value={rawConf}
-                  onChange={(_, v) => setRawConf(v)}
-                  style={{ minHeight: "200px", fontFamily: "monospace" }}
-                  aria-label="rsnapshot.conf Rohtext"
-                  onKeyDown={e => {
-                    if (e.key === "Tab") {
-                      e.preventDefault();
-                      const target = e.target as HTMLTextAreaElement;
-                      const start = target.selectionStart;
-                      const end = target.selectionEnd;
-                      setRawConf(
-                        rawConf.substring(0, start) + "\t" + rawConf.substring(end)
-                      );
-                      setTimeout(() => {
-                        if (rawConfRef.current) {
-                          rawConfRef.current.selectionStart = rawConfRef.current.selectionEnd = start + 1;
-                        }
-                      }, 0);
-                    }
-                  }}
-                />
-              </StackItem>
-              <StackItem>
-                <div className="conf-header">
-                  <strong>/etc/cron.d/rsnapshot (Rohtext):</strong>
-                  <Tooltip content="Neu laden">
-                    <SyncAltIcon className="conf-reload" onClick={loadAll} />
-                  </Tooltip>
-                  <Tooltip content="Speichern">
-                    <Button
-                      variant="plain"
-                      aria-label="cron.d speichern"
-                      onClick={saveRawCron}
-                      isDisabled={isSavingRawCron}
-                      style={{marginLeft: "0.2em"}}
-                    >
-                      {isSavingRawCron ? <Spinner size="sm" /> : <SaveIcon />}
-                    </Button>
-                  </Tooltip>
-                </div>
-                <TextArea
-                  value={rawCron}
-                  onChange={(_, v) => setRawCron(v)}
-                  style={{ minHeight: "150px", fontFamily: "monospace" }}
-                  aria-label="cron.d/rsnapshot Rohtext"
-                />
-              </StackItem>
-            </Stack>
-            {manualConfWarn.length > 0 && (
-              <Alert
-                title="Achtung: Cronjobs und rsnapshot-Konfiguration passen nicht zusammen"
-                variant="warning"
-                isInline
-                style={{marginTop: "1em"}}
-                isPlain
-              >
-                <ul>
-                  {manualConfWarn.map((w, i) => (
-                    <li key={i} dangerouslySetInnerHTML={{__html: w}} />
-                  ))}
-                </ul>
-              </Alert>
-            )}
+            <ExpandableSection toggleText="Manuelle Bearbeitung" isIndented>
+              <Stack hasGutter>
+                <StackItem>
+                  <div className="conf-header">
+                    <strong>rsnapshot.conf (Rohtext):</strong>
+                    <Tooltip content="Neu laden">
+                      <SyncAltIcon className="conf-reload" onClick={loadAll} />
+                    </Tooltip>
+                    <Tooltip content="Speichern">
+                      <Button
+                        variant="plain"
+                        aria-label="rsnapshot.conf speichern"
+                        onClick={saveRawConf}
+                        isDisabled={isSavingRawConf}
+                        style={{marginLeft: "0.2em"}}
+                      >
+                        {isSavingRawConf ? <Spinner size="sm" /> : <SaveIcon />}
+                      </Button>
+                    </Tooltip>
+                  </div>
+                  <TextArea
+                    ref={rawConfRef}
+                    value={rawConf}
+                    onChange={(_, v) => setRawConf(v)}
+                    style={{ minHeight: "200px", fontFamily: "monospace" }}
+                    aria-label="rsnapshot.conf Rohtext"
+                    onKeyDown={e => {
+                      if (e.key === "Tab") {
+                        e.preventDefault();
+                        const target = e.target as HTMLTextAreaElement;
+                        const start = target.selectionStart;
+                        const end = target.selectionEnd;
+                        setRawConf(
+                          rawConf.substring(0, start) + "\t" + rawConf.substring(end)
+                        );
+                        setTimeout(() => {
+                          if (rawConfRef.current) {
+                            rawConfRef.current.selectionStart = rawConfRef.current.selectionEnd = start + 1;
+                          }
+                        }, 0);
+                      }
+                    }}
+                  />
+                </StackItem>
+                <StackItem>
+                  <div className="conf-header">
+                    <strong>/etc/cron.d/rsnapshot (Rohtext):</strong>
+                    <Tooltip content="Neu laden">
+                      <SyncAltIcon className="conf-reload" onClick={loadAll} />
+                    </Tooltip>
+                    <Tooltip content="Speichern">
+                      <Button
+                        variant="plain"
+                        aria-label="cron.d speichern"
+                        onClick={saveRawCron}
+                        isDisabled={isSavingRawCron}
+                        style={{marginLeft: "0.2em"}}
+                      >
+                        {isSavingRawCron ? <Spinner size="sm" /> : <SaveIcon />}
+                      </Button>
+                    </Tooltip>
+                  </div>
+                  <TextArea
+                    value={rawCron}
+                    onChange={(_, v) => setRawCron(v)}
+                    style={{ minHeight: "150px", fontFamily: "monospace" }}
+                    aria-label="cron.d/rsnapshot Rohtext"
+                  />
+                </StackItem>
+              </Stack>
+                  
+              {manualConfWarn.length > 0 && (
+                <Alert
+                  title="Achtung: Cronjobs und rsnapshot-Konfiguration passen nicht zusammen"
+                  variant="warning"
+                  isInline
+                  style={{marginTop: "1em"}}
+                  isPlain
+                >
+                  <ul>
+                    {manualConfWarn.map((w, i) => (
+                      <li key={i} dangerouslySetInnerHTML={{__html: w}} />
+                    ))}
+                  </ul>
+                </Alert>
+              )}
+            </ExpandableSection>
           </StackItem>
           <StackItem>
             <strong>Ausgabe / Log:</strong>
