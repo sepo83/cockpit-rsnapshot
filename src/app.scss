@@ -32,3 +32,11 @@ body {
 .pf-v5-c-page__main {
   padding-left: 0 !important;
 }
+
+.success-flash {
+  animation: flash-green 1s linear;
+}
+@keyframes flash-green {
+  0%   { background: #d4ffe4; }
+  100% { background: none; }
+}

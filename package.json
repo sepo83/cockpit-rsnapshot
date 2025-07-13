@@ -62,6 +62,7 @@
     "style-loader": "^4.0.0",
     "ts-loader": "^9.5.2",
     "webpack": "^5.100.1",
-    "webpack-cli": "^6.0.1"
+    "webpack-cli": "^6.0.1",
+    "cron-parser": "^5.3.0"
   }
 }
