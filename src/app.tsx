@@ -10,14 +10,12 @@ import {
 import {
   Table, Thead, Tbody, Tr, Th, Td
 } from '@patternfly/react-table';
-import { SyncAltIcon, SaveIcon, SearchIcon } from '@patternfly/react-icons';
+import { SyncAltIcon, SaveIcon, SearchIcon, PlusIcon, MinusCircleIcon } from '@patternfly/react-icons';
 import "./app.scss";
 
-const INTERVALS = ["hourly", "daily", "weekly", "monthly"] as const;
-type IntervalName = typeof INTERVALS[number];
-
 type IntervalRow = {
-  name: IntervalName;
+  id: string;
+  name: string;
   count: string;
   cronSyntax: string;
   active: boolean;
@@ -32,34 +30,39 @@ type BackupJob = {
 const CRON_PATH = "/etc/cron.d/rsnapshot";
 const CONF_PATH = "/etc/rsnapshot.conf";
 
-const DEFAULT_CRON: Record<IntervalName, { active: boolean; syntax: string }> = {
-  hourly: { active: false, syntax: "0 * * * *" },
-  daily: { active: false, syntax: "30 3 * * *" },
-  weekly: { active: false, syntax: "0 3 * * 1" },
-  monthly: { active: false, syntax: "30 2 1 * *" }
-};
+function newId() {
+  return (window.crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
+}
 
-function parseConfig(conf: string) {
+const DEFAULT_INTERVALS: IntervalRow[] = [
+  { id: newId(), name: "hourly", count: "", cronSyntax: "0 * * * *", active: false },
+  { id: newId(), name: "daily", count: "", cronSyntax: "30 3 * * *", active: false },
+  { id: newId(), name: "weekly", count: "", cronSyntax: "0 3 * * 1", active: false },
+  { id: newId(), name: "monthly", count: "", cronSyntax: "30 2 1 * *", active: false }
+];
+
+function parseConfig(conf: string): {
+  snapshot_root: string;
+  logfile: string;
+  verbose: string;
+  intervals: IntervalRow[];
+  backups: BackupJob[];
+  excludes: string[];
+  rest: string[];
+  rawLines: string[];
+} {
   const lines = conf.split("\n");
-  const result: {
-    snapshot_root: string;
-    logfile: string;
-    verbose: string;
-    intervals: Partial<Record<IntervalName, string>>;
-    backups: BackupJob[];
-    excludes: string[];
-    rest: string[];
-    rawLines: string[];
-  } = {
+  const result = {
     snapshot_root: "",
     logfile: "",
     verbose: "",
-    intervals: {},
-    backups: [],
-    excludes: [],
-    rest: [],
+    intervals: [] as IntervalRow[],
+    backups: [] as BackupJob[],
+    excludes: [] as string[],
+    rest: [] as string[],
     rawLines: lines
   };
+  const intervalMap: Record<string, IntervalRow> = {};
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -70,8 +73,14 @@ function parseConfig(conf: string) {
     else if (cleanLine.startsWith("verbose")) result.verbose = cleanLine.split(/\s+/)[1] || "";
     else if (/^(retain|interval)\s+/.test(cleanLine)) {
       const [, name, count] = cleanLine.split(/\s+/);
-      if (INTERVALS.includes(name as IntervalName)) {
-        result.intervals[name as IntervalName] = count;
+      if (name) {
+        intervalMap[name] = {
+          id: newId(),
+          name,
+          count,
+          cronSyntax: "",
+          active: !trimmed.startsWith("#")
+        };
       }
     } else if (cleanLine.startsWith("backup")) {
       const [, source, dest, ...opts] = cleanLine.split(/\s+/);
@@ -84,8 +93,41 @@ function parseConfig(conf: string) {
       result.rest.push(line);
     }
   }
-  INTERVALS.forEach(i => { if (!(i in result.intervals)) result.intervals[i] = ""; });
+  result.intervals = Object.values(intervalMap);
+  if (result.intervals.length === 0) {
+    result.intervals.push({
+      id: newId(),
+      name: "custom",
+      count: "1",
+      cronSyntax: "0 0 * * *",
+      active: false
+    });
+  }
   return result;
+}
+
+function parseCron(cron: string, intervals: IntervalRow[]): IntervalRow[] {
+  const cronMap: Record<string, { cronSyntax: string; active: boolean }> = {};
+  intervals.forEach(i => {
+    cronMap[i.name] = { cronSyntax: i.cronSyntax || "", active: false };
+  });
+  cron.split("\n").forEach(line => {
+    if (/^\s*#/.test(line)) return;
+    const trimmed = line.trim();
+    intervals.forEach(interval => {
+      if (trimmed.includes(`rsnapshot ${interval.name}`)) {
+        cronMap[interval.name] = {
+          cronSyntax: trimmed.split(/\s+root/)[0].trim(),
+          active: true
+        };
+      }
+    });
+  });
+  return intervals.map(i => ({
+    ...i,
+    cronSyntax: cronMap[i.name]?.cronSyntax || i.cronSyntax,
+    active: cronMap[i.name]?.active ?? i.active
+  }));
 }
 
 function serializeConfig(parsed: any, intervalRows: IntervalRow[]) {
@@ -93,10 +135,9 @@ function serializeConfig(parsed: any, intervalRows: IntervalRow[]) {
   if (parsed.snapshot_root) lines.push(`snapshot_root\t${parsed.snapshot_root}`);
   if (parsed.logfile) lines.push(`logfile\t${parsed.logfile}`);
   if (parsed.verbose) lines.push(`verbose\t${parsed.verbose}`);
-  INTERVALS.forEach(i => {
-    const row = intervalRows.find((r: any) => r.name === i);
-    if (row && row.count && isValidCount(row.count)) {
-      const line = `retain\t${i}\t${row.count}`;
+  intervalRows.forEach(row => {
+    if (row.count) {
+      const line = `retain\t${row.name}\t${row.count}`;
       lines.push(row.active ? line : `#${line}`);
     }
   });
@@ -113,6 +154,7 @@ function serializeConfig(parsed: any, intervalRows: IntervalRow[]) {
 function serializeCronFile(intervalRows: IntervalRow[]) {
   let cron = "# Managed by Cockpit rsnapshot Plugin\n";
   intervalRows.forEach(row => {
+    if (!row.cronSyntax) return;
     const line = `${row.cronSyntax} root /usr/bin/rsnapshot ${row.name}`;
     cron += row.active ? `${line}\n` : `#${line}\n`;
   });
@@ -127,20 +169,6 @@ function isValidCronSyntax(s: string): boolean {
 
 function isValidCount(v: string) {
   return /^\d+$/.test(v) && Number(v) > 0;
-}
-
-function extractActiveRetains(conf: string): string[] {
-  return conf.split("\n")
-    .filter(line => line.match(/^\s*(retain|interval)\s+/) && !line.trim().startsWith("#"))
-    .map(line => line.trim().split(/\s+/)[1]);
-}
-function extractActiveCronJobs(cron: string): string[] {
-  return cron.split("\n")
-    .filter(line => !line.trim().startsWith("#") && /rsnapshot\s+(hourly|daily|weekly|monthly)/.test(line))
-    .map(line => {
-      const m = line.match(/rsnapshot\s+(hourly|daily|weekly|monthly)/);
-      return m ? m[1] : "";
-    });
 }
 
 function getNextCronRun(cron: string): string {
@@ -186,11 +214,9 @@ const App: React.FC = () => {
   const [snapshotRoot, setSnapshotRoot] = useState("");
   const [logfile, setLogfile] = useState("");
   const [verbose, setVerbose] = useState("");
-  const [intervalRows, setIntervalRows] = useState<IntervalRow[]>(INTERVALS.map(i => ({
-    name: i, count: "", cronSyntax: DEFAULT_CRON[i].syntax, active: false
-  })));
-  const [cronErrors, setCronErrors] = useState<{[key: number]: string|undefined}>({});
-  const [countErrors, setCountErrors] = useState<{[key: number]: string|undefined}>({});
+  const [intervalRows, setIntervalRows] = useState<IntervalRow[]>([...DEFAULT_INTERVALS]);
+  const [cronErrors, setCronErrors] = useState<{[key: string]: string|undefined}>({});
+  const [countErrors, setCountErrors] = useState<{[key: string]: string|undefined}>({});
   const [backups, setBackups] = useState<BackupJob[]>([]);
   const [excludes, setExcludes] = useState<string[]>([]);
   const [rest, setRest] = useState<string[]>([]);
@@ -203,10 +229,40 @@ const App: React.FC = () => {
   const [manualConfWarn, setManualConfWarn] = useState<string[]>([]);
   const [lastBackupInfo, setLastBackupInfo] = useState<string>("");
 
-  const [cronPreview, setCronPreview] = useState<{[key: number]: string}>({});
+  const [cronPreview, setCronPreview] = useState<{[key: string]: string}>({});
 
   // Backup-Intervall-Auswahl
-  const [backupInterval, setBackupInterval] = useState<IntervalName>("daily");
+  const [backupInterval, setBackupInterval] = useState<string>("daily");
+
+  // Gemeinsames Laden und Mergen!
+  const loadAll = useCallback(() => {
+    Promise.all([
+      cockpit.spawn(["cat", CONF_PATH]),
+      cockpit.spawn(["cat", CRON_PATH]).catch(() => "")
+    ]).then(([confData, cronData]) => {
+      setRawConf(confData);
+      setRawCron(cronData);
+
+      // Config parsen
+      const parsedConfig = parseConfig(confData);
+      setSnapshotRoot(parsedConfig.snapshot_root);
+      setLogfile(parsedConfig.logfile);
+      setVerbose(parsedConfig.verbose);
+      setBackups(parsedConfig.backups.filter(isValidBackupJob));
+      setExcludes(parsedConfig.excludes.filter(e => e));
+      setRest(parsedConfig.rest);
+
+      // Intervalle aus Cron mergen
+      const mergedIntervals = parseCron(cronData, parsedConfig.intervals);
+      setIntervalRows(mergedIntervals);
+
+      // Setze das erste aktive Intervall als Default für das Dropdown
+      const firstActive = mergedIntervals.find(i => i.active);
+      if (firstActive) setBackupInterval(firstActive.name);
+    });
+    loadLastBackup();
+    // eslint-disable-next-line
+  }, []);
 
   useEffect(() => {
     cockpit.spawn(["which", "rsnapshot"])
@@ -215,76 +271,6 @@ const App: React.FC = () => {
     hasSudoRights().then(setSudoAvailable);
     loadAll();
     // eslint-disable-next-line
-  }, []);
-
-  const loadAll = useCallback(() => {
-    loadConfig();
-    loadCron();
-    loadLastBackup();
-  }, []);
-
-  const loadConfig = useCallback(() => {
-    cockpit.spawn(["cat", CONF_PATH])
-      .then(data => {
-        setRawConf(data);
-        try {
-          const parsed = parseConfig(data);
-          setSnapshotRoot(parsed.snapshot_root);
-          setLogfile(parsed.logfile);
-          setVerbose(parsed.verbose);
-          setBackups(parsed.backups.filter(isValidBackupJob));
-          setExcludes(parsed.excludes.filter(e => e));
-          setRest(parsed.rest);
-          setIntervalRows(rows => INTERVALS.map((name, idx) => ({
-            ...rows[idx],
-            count: parsed.intervals[name] || ""
-          })));
-        } catch (err) {
-          setAlerts(alerts => [
-            ...alerts,
-            {title: "Fehler beim Parsen der Konfiguration: " + (err as any)?.message, variant: "danger"}
-          ]);
-        }
-      })
-      .catch(error => {
-        setAlerts(alerts => [
-          ...alerts,
-          {title: "Fehler beim Laden der Konfiguration: " + (error?.message || JSON.stringify(error)), variant: "danger"}
-        ]);
-      });
-  }, []);
-
-  const loadCron = useCallback(() => {
-    cockpit.spawn(["cat", CRON_PATH])
-      .then(data => {
-        setRawCron(data);
-        const cronData: any = {};
-        INTERVALS.forEach(i => cronData[i] = { ...DEFAULT_CRON[i] });
-        const lines = data.split("\n");
-        for (const line of lines) {
-          if (/^\s*#/.test(line)) continue;
-          const trimmed = line.trim();
-          for (const interval of INTERVALS) {
-            if (trimmed.includes(`rsnapshot ${interval}`)) {
-              cronData[interval].active = true;
-              cronData[interval].syntax = trimmed.split(/\s+root/)[0].trim();
-            }
-          }
-        }
-        setIntervalRows(rows => INTERVALS.map((name, idx) => ({
-          ...rows[idx],
-          cronSyntax: cronData[name].syntax,
-          active: cronData[name].active
-        })));
-      })
-      .catch(() => {
-        setRawCron("");
-        setIntervalRows(rows => INTERVALS.map((name, idx) => ({
-          ...rows[idx],
-          cronSyntax: DEFAULT_CRON[name].syntax,
-          active: false
-        })));
-      });
   }, []);
 
   const loadLastBackup = useCallback(() => {
@@ -387,37 +373,55 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    const preview: {[key: number]: string} = {};
-    intervalRows.forEach((row, idx) => {
+    const preview: {[key: string]: string} = {};
+    intervalRows.forEach((row) => {
       if (row.cronSyntax && isValidCronSyntax(row.cronSyntax)) {
-        preview[idx] = getNextCronRun(row.cronSyntax);
+        preview[row.id] = getNextCronRun(row.cronSyntax);
       } else {
-        preview[idx] = "";
+        preview[row.id] = "";
       }
     });
     setCronPreview(preview);
     // eslint-disable-next-line
   }, [intervalRows]);
 
-  const handleIntervalRow = useCallback((idx: number, field: string, value: any) => {
+  const handleIntervalRow = useCallback((id: string, field: string, value: any) => {
     setIntervalRows(rows =>
-      rows.map((row, i) =>
-        i === idx ? { ...row, [field]: value } : row
+      rows.map((row) =>
+        row.id === id ? { ...row, [field]: value } : row
       )
     );
+    const idx = intervalRows.findIndex(r => r.id === id);
     if (field === "cronSyntax") {
       setCronErrors(errors => ({
         ...errors,
-        [idx]: isValidCronSyntax(value) ? undefined : "Ungültige Cron-Syntax (z.B. 0 * * * * oder @daily)"
+        [id]: isValidCronSyntax(value) ? undefined : "Ungültige Cron-Syntax (z.B. 0 * * * * oder @daily)"
       }));
     }
     if (field === "count") {
       setCountErrors(errors => ({
         ...errors,
-        [idx]: isValidCount(value) || value === "" ? undefined : "Nur positive ganze Zahl erlaubt"
+        [id]: isValidCount(value) || value === "" ? undefined : "Nur positive ganze Zahl erlaubt"
       }));
     }
-  }, []);
+  }, [intervalRows]);
+
+  const addInterval = () => {
+    setIntervalRows(rows => [
+      ...rows,
+      {
+        id: newId(),
+        name: `custom${rows.length + 1}`,
+        count: "1",
+        cronSyntax: "0 0 * * *",
+        active: false
+      }
+    ]);
+  };
+
+  const removeInterval = (id: string) => {
+    setIntervalRows(rows => rows.length > 1 ? rows.filter(row => row.id !== id) : rows);
+  };
 
   const handleBackup = useCallback((idx: number, field: keyof BackupJob, value: string) => {
     setBackups((prev: BackupJob[]) => {
@@ -438,23 +442,6 @@ const App: React.FC = () => {
   }, []);
   const addExclude = useCallback(() => setExcludes(prev => [...prev, ""]), []);
   const removeExclude = useCallback((idx: number) => setExcludes(prev => prev.filter((_, i) => i !== idx)), []);
-
-  useEffect(() => {
-    const retains = extractActiveRetains(rawConf);
-    const crons = extractActiveCronJobs(rawCron);
-    const missingInCron = retains.filter(r => !crons.includes(r));
-    const missingInRetain = crons.filter(c => !retains.includes(c));
-    const warn: string[] = [];
-    if (missingInCron.length)
-      warn.push(`Folgende aktive <code>retain</code>-Einträge in <code>rsnapshot.conf</code> haben keinen passenden Cronjob: ${missingInCron.map(x => `<code>${x}</code>`).join(", ")}`);
-    if (missingInRetain.length)
-      warn.push(`Folgende aktive Cronjobs in <code>/etc/cron.d/rsnapshot</code> haben keinen passenden <code>retain</code>-Eintrag: ${missingInRetain.map(x => `<code>${x}</code>`).join(", ")}`);
-    setManualConfWarn(warn);
-  }, [rawConf, rawCron]);
-
-  useEffect(() => {
-    loadLastBackup();
-  }, [snapshotRoot, loadLastBackup]);
 
   // Tooltip für Cron-Syntax
   const cronTooltip = (
@@ -501,11 +488,11 @@ const App: React.FC = () => {
             <ToolbarItem>
               <FormSelect
                 value={backupInterval}
-                onChange={v => setBackupInterval(v as IntervalName)}
+                onChange={v => setBackupInterval(v)}
                 aria-label="Backup-Intervall auswählen"
               >
-                {INTERVALS.map(i => (
-                  <FormSelectOption key={i} value={i} label={i} />
+                {intervalRows.filter(i => i.active).map(i => (
+                  <FormSelectOption key={i.id} value={i.name} label={i.name} />
                 ))}
               </FormSelect>
             </ToolbarItem>
@@ -564,58 +551,9 @@ const App: React.FC = () => {
               {successFlash && <Badge style={{marginLeft: 8}} isRead>Gespeichert</Badge>}
             </div>
             <Form>
-              <FormGroup label="Backup-Ziel (snapshot_root)" fieldId="snapshot_root">
-                <div style={{display: "flex", alignItems: "center", gap: 8}}>
-                  <TextInput
-                    id="snapshot_root"
-                    value={snapshotRoot}
-                    onChange={(_, v) => setSnapshotRoot(v)}
-                  />
-                  <Tooltip content="Verzeichnis im Terminal anzeigen">
-                    <Button variant="plain" aria-label="Öffnen"
-                      onClick={() => {
-                        cockpit.spawn(["xdg-open", snapshotRoot])
-                          .catch(() => setAlerts(alerts => [
-                            ...alerts,
-                            { title: "Konnte Verzeichnis nicht öffnen (kein grafisches System?)", variant: "warning" }
-                          ]));
-                      }}>
-                      <SearchIcon />
-                    </Button>
-                  </Tooltip>
-                </div>
-                {lastBackupInfo && (
-                  <div style={{fontSize: "0.95em", color: "#555", marginTop: 4}}>
-                    Letztes Backup: {lastBackupInfo}
-                  </div>
-                )}
-                <FormHelperText>
-                  Verzeichnis, in dem die Snapshots gespeichert werden.
-                </FormHelperText>
-              </FormGroup>
-              <FormGroup label="Logdatei" fieldId="logfile">
-                <TextInput
-                  id="logfile"
-                  value={logfile}
-                  onChange={(_, v) => setLogfile(v)}
-                />
-                <FormHelperText>
-                  Pfad zur Logdatei (z.B. /var/log/rsnapshot.log)
-                </FormHelperText>
-              </FormGroup>
-              <FormGroup label="Verbositätslevel" fieldId="verbose">
-                <TextInput
-                  id="verbose"
-                  value={verbose}
-                  onChange={(_, v) => setVerbose(v)}
-                />
-                <FormHelperText>
-                  0=keine Ausgabe, 1=Standard, 2=mehr, 3=Debug
-                </FormHelperText>
-              </FormGroup>
               <FormGroup label="Intervalle & Cronjobs" fieldId="intervals">
                 <FormHelperText>
-                  Definiert, wie viele Snapshots pro Intervall gehalten werden und wann sie laufen.
+                  Definiert, wie viele Snapshots pro Intervall gehalten werden und wann sie laufen. Sie können Intervalle hinzufügen oder entfernen.
                 </FormHelperText>
                 <Table variant="compact" aria-label="Intervalle und Cronjobs">
                   <Thead>
@@ -624,57 +562,64 @@ const App: React.FC = () => {
                       <Th>Name</Th>
                       <Th>Anzahl</Th>
                       <Th>Cron-Syntax</Th>
+                      <Th></Th>
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {intervalRows.map((row, idx) => (
-                      <Tr key={row.name}>
+                    {intervalRows.map((row) => (
+                      <Tr key={row.id}>
                         <Td>
                           <Switch
-                            id={`interval-active-${row.name}`}
+                            id={`interval-active-${row.id}`}
                             isChecked={row.active}
-                            onChange={checked => handleIntervalRow(idx, "active", checked)}
+                            onChange={checked => handleIntervalRow(row.id, "active", checked)}
                             aria-label="Aktiv"
                           />
                         </Td>
                         <Td>
                           <TextInput
                             value={row.name}
-                            readOnly
+                            onChange={(_, v) => handleIntervalRow(row.id, "name", v)}
                             aria-label="Name"
                           />
                         </Td>
                         <Td>
                           <TextInput
                             value={row.count}
-                            onChange={(_, v) => handleIntervalRow(idx, "count", v)}
+                            onChange={(_, v) => handleIntervalRow(row.id, "count", v)}
                             aria-label="Anzahl"
-                            validated={countErrors[idx] ? "error" : "default"}
+                            validated={countErrors[row.id] ? "error" : "default"}
                           />
-                          {countErrors[idx] && (
+                          {countErrors[row.id] && (
                             <FormHelperText className="pf-m-error" style={{color: "#c9190b"}}>
-                              {countErrors[idx]}
+                              {countErrors[row.id]}
                             </FormHelperText>
                           )}
                         </Td>
                         <Td>
-                          <Tooltip content={cronErrors[idx] ? cronTooltip : undefined}>
+                          <Tooltip content={cronErrors[row.id] ? cronTooltip : undefined}>
                             <TextInput
                               value={row.cronSyntax}
-                              onChange={(_, v) => handleIntervalRow(idx, "cronSyntax", v)}
+                              onChange={(_, v) => handleIntervalRow(row.id, "cronSyntax", v)}
                               aria-label="Cron-Syntax"
-                              validated={cronErrors[idx] ? "error" : "default"}
+                              validated={cronErrors[row.id] ? "error" : "default"}
                             />
                           </Tooltip>
-                          {cronPreview[idx] && (
-                            <div style={{fontSize: "0.9em", color: "#555", marginTop: 4}}>{cronPreview[idx]}</div>
+                          {cronPreview[row.id] && (
+                            <div style={{fontSize: "0.9em", color: "#555", marginTop: 4}}>{cronPreview[row.id]}</div>
                           )}
+                        </Td>
+                        <Td>
+                          <Button variant="plain" aria-label="Intervall entfernen" isDisabled={intervalRows.length <= 1}
+                            onClick={() => removeInterval(row.id)}><MinusCircleIcon /></Button>
                         </Td>
                       </Tr>
                     ))}
                   </Tbody>
                 </Table>
+                <Button variant="link" icon={<PlusIcon />} onClick={addInterval}>Intervall hinzufügen</Button>
               </FormGroup>
+              {/* ... Rest wie gehabt ... */}
               <FormGroup label="Backup-Jobs" fieldId="backups">
                 <FormHelperText>
                   Definiert, welche Verzeichnisse gesichert werden.
@@ -713,7 +658,7 @@ const App: React.FC = () => {
               </FormGroup>
             </Form>
           </StackItem>
-
+          {/* ... Rest wie gehabt ... */}
           <StackItem>
             <Title headingLevel="h2" size="md" style={{marginTop: "2em"}}>Manuelle Bearbeitung</Title>
             <Stack hasGutter>
@@ -721,7 +666,7 @@ const App: React.FC = () => {
                 <div className="conf-header">
                   <strong>rsnapshot.conf (Rohtext):</strong>
                   <Tooltip content="Neu laden">
-                    <SyncAltIcon className="conf-reload" onClick={loadConfig} />
+                    <SyncAltIcon className="conf-reload" onClick={loadAll} />
                   </Tooltip>
                   <Tooltip content="Speichern">
                     <Button
@@ -746,7 +691,7 @@ const App: React.FC = () => {
                 <div className="conf-header">
                   <strong>/etc/cron.d/rsnapshot (Rohtext):</strong>
                   <Tooltip content="Neu laden">
-                    <SyncAltIcon className="conf-reload" onClick={loadCron} />
+                    <SyncAltIcon className="conf-reload" onClick={loadAll} />
                   </Tooltip>
                   <Tooltip content="Speichern">
                     <Button
@@ -784,7 +729,6 @@ const App: React.FC = () => {
               </Alert>
             )}
           </StackItem>
-
           <StackItem>
             <strong>Ausgabe / Log:</strong>
             <pre style={{padding: "1em", border: "1px solid #ccc", minHeight: "100px"}}>{output}</pre>
