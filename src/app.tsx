@@ -120,7 +120,6 @@ function parseCron(cron: string, intervals: IntervalRow[]): IntervalRow[] {
     // Check if the line is commented out
     const isCommented = trimmed.startsWith("#");
     const cleanLine = isCommented ? trimmed.slice(1).trim() : trimmed;
-    const cleanLine = isCommented ? trimmed.slice(1).trim() : trimmed;
 
     intervals.forEach(interval => {
       if (cleanLine.includes(`rsnapshot ${interval.name}`)) {
