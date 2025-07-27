@@ -1,87 +1,80 @@
 Cockpit rsnapshot Plugin
 
-Dieses Plugin ermöglicht die Verwaltung von rsnapshot direkt über das Cockpit-Webinterface.
-Du kannst Backups starten, die Konfiguration bearbeiten und Logdateien einsehen – alles bequem im Browser.
+This plugin allows you to manage rsnapshot directly through the Cockpit web interface.
+You can start backups, edit the configuration, and view log files - everything conveniently in your browser.
 Features
 
-    Backup starten (z.B. rsnapshot daily)
+    Start a backup (e.g. rsnapshot daily)
 
-    Konfiguration anzeigen und bearbeiten (/etc/rsnapshot.conf)
+    View and edit the configuration (/etc/rsnapshot.conf)
 
-    Logdateien anzeigen (/var/log/rsnapshot)
+    View log files (/var/log/rsnapshot)
 
-    Einfache Integration in Cockpit
+    Easy integration into Cockpit
 
-Voraussetzungen
+Requirements
+    Cockpit installed and running
 
-    Cockpit installiert und lauffähig
+    rsnapshot installed and configured
 
-    rsnapshot installiert und konfiguriert
-
-    Root- oder Sudo-Rechte für rsnapshot-Befehle und zum Schreiben der Konfiguration
+    Root or sudo rights for rsnapshot commands and to write the configuration
 
 Installation
 
-    Plugin klonen:
-
+    Clone the plugin:
 bash
 git clone https://github.com/sepo83/cockpit-rsnapshot.git
 cd cockpit-rsnapshot
 
-Skript ausführbar machen:
-
+Make the script executable:
 bash
 chmod +x write-config.sh
 
-Sudo-Rechte für Cockpit-Benutzer einrichten:
+Set up sudo rights for the Cockpit user:
 
-Erstelle eine Datei /etc/sudoers.d/cockpit-rsnapshot mit folgendem Inhalt (passe ggf. den Benutzer an):
-
+Create a file /etc/sudoers.d/cockpit-rsnapshot with the following content (adjust the user if necessary):
 text
-%wheel ALL=(ALL) NOPASSWD: /pfad/zu/deinem/cockpit-rsnapshot/write-config.sh
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/rsnapshot
 
-    Hinweis: Ersetze /pfad/zu/deinem/cockpit-rsnapshot/ durch den tatsächlichen Pfad.
+    Note: Replace /path/to/your/cockpit-rsnapshot/ with the actual path.
 
-Im Entwicklungsmodus starten:
-
+Start in development mode:
     bash
     ./tools/run-dev
 
-    Rufe dann Cockpit im Browser auf: https://localhost:9090
+    Then access Cockpit in your browser: https://localhost:9090
 
-Nutzung
+Usage
 
-    Backup starten:
-    Klicke auf „Backup starten“, um ein rsnapshot-Backup (z.B. daily) auszuführen.
+    Start a backup:
+    Click on "Start Backup" to run an rsnapshot backup (e.g. rsnapshot daily).
 
-    Konfiguration anzeigen/bearbeiten:
-    Klicke auf „Konfiguration anzeigen“, bearbeite die Datei und speichere mit „Konfiguration speichern“.
+    View/edit configuration:
+    Click on "View Configuration", edit the file, and save it with "Save Configuration".
 
-    Log anzeigen:
-    Klicke auf „Log anzeigen“, um das aktuelle rsnapshot-Log einzusehen.
+    View logs:
+    Click on "View Logs" to see the current rsnapshot log.
 
-Sicherheitshinweise
+Security Notes
 
-    Das Plugin benötigt erhöhte Rechte (sudo) für einige Operationen.
-    Stelle sicher, dass nur vertrauenswürdige Benutzer Zugriff auf Cockpit und dieses Plugin haben.
+    The plugin requires elevated privileges (sudo) for some operations.
+    Make sure only trusted users have access to Cockpit and this plugin.
 
-    Bearbeite die Sudoers-Datei mit visudo und prüfe die Pfade sorgfältig.
+    Edit the sudoers file with visudo and carefully check the paths.
 
-Fehlerbehebung
+Troubleshooting
 
-    Berechtigungsprobleme:
-    Prüfe die Sudoers-Konfiguration und die Dateiberechtigungen von write-config.sh.
+    Permission issues:
+    Check the sudoers configuration and file permissions of write-config.sh.
 
-    Keine Ausgabe oder Fehler im UI:
-    Öffne die Browser-Konsole (F12) und prüfe die Fehlermeldungen.
+    No output or errors in the UI:
+    Open the browser console (F12) and check for error messages.
 
-    rsnapshot läuft nicht:
-    Teste die Befehle zuerst direkt im Terminal.
+    rsnapshot is not running:
+    Test the commands first directly in the terminal.
 
-Mitwirken
+Contribution
 
-Pull Requests, Bug Reports und Feature-Wünsche sind willkommen!
-Lizenz
-
+Pull Requests, Bug Reports, and Feature Requests are welcome!
+License
 MIT License
