@@ -27,16 +27,20 @@ body {
   margin-bottom: 0.5em;
 }
 
-// Entfernt das linke Padding im Cockpit-Plugin-Content
-.pf-v5-c-page__main-section,
-.pf-v5-c-page__main {
-  padding-left: 0 !important;
-}
-
 .success-flash {
   animation: flash-green 1s linear;
 }
 @keyframes flash-green {
   0%   { background: #d4ffe4; }
   100% { background: none; }
+}
+
+@media (min-width: 75rem) {
+  .pf-v6-c-page {
+    --pf-v6-c-page__sidebar--Width: 0;
+    grid-template-areas:
+      "header"
+      "main";
+    grid-template-columns: 1fr;
+  }
 }
