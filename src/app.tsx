@@ -65,9 +65,9 @@ function parseConfig(conf: string): {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    // Prüfe, ob die Zeile auskommentiert ist
-    const isCommented = trimmed.startsWith("#");
+    // Check if the line is commented out
     // Entferne ggf. das führende "#" für die weitere Analyse
+    const isCommented = trimmed.startsWith("#");
     const cleanLine = isCommented ? trimmed.slice(1).trim() : trimmed;
 
     if (cleanLine.startsWith("snapshot_root")) {
@@ -117,9 +117,9 @@ function parseCron(cron: string, intervals: IntervalRow[]): IntervalRow[] {
   cron.split("\n").forEach(line => {
     const trimmed = line.trim();
     if (!trimmed) return;
-
-    // Prüfe, ob die Zeile auskommentiert ist
+    // Check if the line is commented out
     const isCommented = trimmed.startsWith("#");
+    const cleanLine = isCommented ? trimmed.slice(1).trim() : trimmed;
     const cleanLine = isCommented ? trimmed.slice(1).trim() : trimmed;
 
     intervals.forEach(interval => {
@@ -190,14 +190,14 @@ function getNextCronRun(cron: string): string {
       "@reboot": "",
     };
     const cronExpr = shortcutMap[cron.trim()] || cron;
-    if (!cronExpr) return "Wird beim Systemstart ausgeführt";
+    if (!cronExpr) return "Next run will be executed at system start";
     const interval = CronExpressionParser.parse(cronExpr, {
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone
     });
     const next = interval.next();
-    return "Nächster Lauf: " + next.toDate().toLocaleString();
+    return `Next run: ${next.toDate().toLocaleString()}`;
   } catch (e) {
-    return "Fehler: " + e;
+    return "Error: " + e;
   }
 }
 
@@ -267,33 +267,33 @@ const App: React.FC = () => {
 
   const [cronPreview, setCronPreview] = useState<{[key: string]: string}>({});
 
-  // Refs für Tabulator-Workaround
+  // Refs for Tabulator-Workaround
   const rawConfRef = useRef<HTMLTextAreaElement>(null);
   const restRef = useRef<HTMLTextAreaElement>(null);
 
-  // Snapshot Root prüfen
+  // check Snapshot Root
   const checkSnapshotRoot = useCallback((dir: string) => {
     if (!dir || dir.trim() === "") {
       setSnapshotRootStatus("empty");
-      setSnapshotRootStatusMsg("Bitte angeben");
+      setSnapshotRootStatusMsg("Please specify");
       return;
     }
     cockpit.spawn([ "bash", "-c", `[ -d "${dir.replace(/"/g, '\\"')}" ] && [ -w "${dir.replace(/"/g, '\\"')}" ] && echo OK || ( [ -d "${dir.replace(/"/g, '\\"')}" ] && echo NOWRITE || echo NOEXIST )` ])
       .then((out: string) => {
         if (out.trim() === "OK") {
           setSnapshotRootStatus("ok");
-          setSnapshotRootStatusMsg("Verzeichnis existiert und ist beschreibbar.");
+          setSnapshotRootStatusMsg("Directory exists and is writable.");
         } else if (out.trim() === "NOWRITE") {
           setSnapshotRootStatus("notwritable");
-          setSnapshotRootStatusMsg("Verzeichnis existiert, ist aber nicht beschreibbar!");
+          setSnapshotRootStatusMsg("Directory exists, but is not writable! rsnapshot will create the directory (exception: no_create_root 1).");
         } else {
           setSnapshotRootStatus("notfound");
-          setSnapshotRootStatusMsg("Verzeichnis existiert nicht! rsnapshot wird das Verzeichnis anlegen (Ausnahme: no_create_root 1).");
+          setSnapshotRootStatusMsg("Directory does not exist! rsnapshot will create the directory (exception: no_create_root 1).");
         }
       })
       .catch((err: any) => {
         setSnapshotRootStatus("error");
-        setSnapshotRootStatusMsg("Fehler bei der Prüfung: " + (err?.message || err));
+        setSnapshotRootStatusMsg("Error during check: " + (err?.message || err));
       });
   }, []);
 
@@ -301,28 +301,28 @@ const App: React.FC = () => {
     checkSnapshotRoot(snapshotRoot);
   }, [snapshotRoot, checkSnapshotRoot]);
 
-  // Configtest ausführen
+  // execute Configtest 
   const runConfigTest = useCallback(() => {
-    setOutput(prev => prev + "Starte rsnapshot configtest...\n");
+    setOutput(prev => prev + "Start rsnapshot configtest...\n");
     cockpit.spawn(["rsnapshot", "configtest"], { superuser: "require", err: "message" })
       .then(data => {
         setOutput(prev => prev + data + "\n");
-        setAlerts(alerts => [...alerts, { title: "Configtest erfolgreich", variant: "success" }]);
+        setAlerts(alerts => [...alerts, { title: "Configtest sucessful", variant: "success" }]);
       })
       .catch(error => {
         setOutput(prev =>
           prev +
-          "Fehler beim configtest: " +
+          "Error during rsnapshot configtest: " +
           (error?.message || "") +
           (error?.problem ? "\n" + error.problem : "") +
           (error?.stderr ? "\n" + error.stderr : "") +
           "\n"
         );
-        setAlerts(alerts => [...alerts, { title: "Fehler beim Configtest – Details siehe Log unten", variant: "danger" }]);
+        setAlerts(alerts => [...alerts, { title: "Error during rsnapshot configtest – Details see log below", variant: "danger" }]);
       });
   }, []);
 
-  // Gemeinsames Laden und Mergen!
+  // Load and Merge
   const loadAll = useCallback(() => {
     Promise.all([
       cockpit.spawn(["cat", CONF_PATH]),
@@ -331,7 +331,7 @@ const App: React.FC = () => {
       setRawConf(confData);
       setRawCron(cronData);
 
-      // Config parsen
+      // parse config 
       const parsedConfig = parseConfig(confData);
       setSnapshotRoot(parsedConfig.snapshot_root);
       setLogfile(parsedConfig.logfile);
@@ -339,7 +339,7 @@ const App: React.FC = () => {
       setBackups(parsedConfig.backups.filter(isValidBackupJob));
       setRest(parsedConfig.rest);
 
-      // Intervalle aus Cron mergen
+      // Merge intervals from cron
       const mergedIntervals = parseCron(cronData, parsedConfig.intervals);
       setIntervalRows(mergedIntervals);
     });
@@ -365,14 +365,14 @@ const App: React.FC = () => {
     cockpit.spawn(["bash", "-c", `ls -1dt ${snapshotRoot}/*/ 2>/dev/null | head -1`])
       .then(dir => {
         if (!dir.trim()) {
-          setLastBackupInfo("Kein Backup gefunden.");
+          setLastBackupInfo("No backup found.");
           return;
         }
         return cockpit.spawn(["stat", "-c", "%y", dir.trim()])
-          .then(date => setLastBackupInfo(`${dir.trim()} (letzte Änderung: ${date.trim()})`))
+          .then(date => setLastBackupInfo(`${dir.trim()} (last modified: ${date.trim()})`))
           .catch(() => setLastBackupInfo(dir.trim()));
       })
-      .catch(() => setLastBackupInfo("Kein Backup gefunden."));
+      .catch(() => setLastBackupInfo("No backup found."));
   }, [snapshotRoot]);
 
   useEffect(() => {
@@ -408,7 +408,7 @@ const App: React.FC = () => {
         )
     ])
       .then(() => {
-        setAlerts(alerts => [...alerts, {title: "Konfiguration und Cronjobs gespeichert", variant: "success"}]);
+        setAlerts(alerts => [...alerts, {title: "Configuration and cron jobs saved", variant: "success"}]);
         setSuccessFlash(true);
         loadAll();
         setTimeout(() => setSuccessFlash(false), 1000);
@@ -417,7 +417,7 @@ const App: React.FC = () => {
       .catch(error => {
         setAlerts(alerts => [
           ...alerts,
-          {title: "Fehler beim Speichern: " + (error?.message || JSON.stringify(error)), variant: "danger"}
+          {title: "Error saving: " + (error?.message || JSON.stringify(error)), variant: "danger"}
         ]);
       })
       .finally(() => setIsSavingConfig(false));
@@ -427,13 +427,13 @@ const App: React.FC = () => {
     setIsSavingRawConf(true);
     cockpit.file(CONF_PATH, { superuser: "require" }).replace(rawConf)
       .then(() => {
-        setAlerts(alerts => [...alerts, {title: "Konfiguration gespeichert", variant: "success"}]);
+        setAlerts(alerts => [...alerts, {title: "Configuration saved", variant: "success"}]);
         loadAll();
       })
       .catch(error => {
         setAlerts(alerts => [
           ...alerts,
-          {title: "Fehler beim Speichern der Konfiguration: " + (error?.message || JSON.stringify(error)), variant: "danger"}
+          {title: "Error saving configuration: " + (error?.message || JSON.stringify(error)), variant: "danger"}
         ]);
       })
       .finally(() => setIsSavingRawConf(false));
@@ -449,13 +449,13 @@ const App: React.FC = () => {
         ])
       )
       .then(() => {
-        setAlerts(alerts => [...alerts, {title: "Cron-Datei gespeichert", variant: "success"}]);
+        setAlerts(alerts => [...alerts, {title: "Cron file saved", variant: "success"}]);
         loadAll();
       })
       .catch(error => {
         setAlerts(alerts => [
           ...alerts,
-          {title: "Fehler beim Speichern der Cron-Datei: " + (error?.message || JSON.stringify(error)), variant: "danger"}
+          {title: "Error saving cron file: " + (error?.message || JSON.stringify(error)), variant: "danger"}
         ]);
       })
       .finally(() => setIsSavingRawCron(false));
@@ -483,12 +483,12 @@ const App: React.FC = () => {
       if (!retain || !retain.active) {
         result[row.id] = {
           enabled: false,
-          reason: "Dieses Intervall ist nicht als aktives retain/intervall in rsnapshot.conf gespeichert."
+          reason: "This interval is not saved as an active retain/interval in rsnapshot.conf."
         };
       } else if (!cron || !cron.active) {
         result[row.id] = {
           enabled: false,
-          reason: "Dieses Intervall ist nicht als aktiver Cronjob in /etc/cron.d/rsnapshot gespeichert."
+          reason: "This interval is not saved as an active cron job in /etc/cron.d/rsnapshot."
         };
       } else if (
         retain.count !== row.count ||
@@ -497,7 +497,7 @@ const App: React.FC = () => {
       ) {
         result[row.id] = {
           enabled: false,
-          reason: "Dieses Intervall ist nicht exakt so gespeichert (Name, Anzahl, Cron-Syntax, Aktiv-Status müssen übereinstimmen)."
+          reason: "This interval is not exactly saved (Name, count, cron syntax, and active status must match)."
         };
       } else {
         result[row.id] = { enabled: true, reason: "" };
@@ -515,13 +515,13 @@ const App: React.FC = () => {
     if (field === "cronSyntax") {
       setCronErrors(errors => ({
         ...errors,
-        [id]: isValidCronSyntax(value) ? undefined : "Ungültige Cron-Syntax (z.B. 0 * * * * oder @daily)"
+        [id]: isValidCronSyntax(value) ? undefined : "Invalid cron syntax (e.g. 0 * * * * or @daily)"
       }));
     }
     if (field === "count") {
       setCountErrors(errors => ({
         ...errors,
-        [id]: isValidCount(value) || value === "" ? undefined : "Nur positive ganze Zahl erlaubt"
+        [id]: isValidCount(value) || value === "" ? undefined : "Only positive integers are allowed"
       }));
     }
   }, []);
@@ -583,11 +583,11 @@ const App: React.FC = () => {
   return (
     <Page>
       <PageSection>
-        <Title headingLevel="h1" size="lg">rsnapshot Verwaltung</Title>
+        <Title headingLevel="h1" size="lg">rsnapshot Management</Title>
         <div style={{marginBottom: 8, color: "#555", fontSize: "1em"}}>
-          <strong>rsnapshot</strong> ist ein flexibles Backup-Tool auf Basis von rsync und Hardlinks.<br />
-          Dieses Cockpit-Plugin ermöglicht die einfache Verwaltung der wichtigsten Einstellungen, Cronjobs und Backups.<br />
-          <a href="https://rsnapshot.org/" target="_blank" rel="noopener noreferrer">Projektseite</a>
+          <strong>rsnapshot</strong> is a flexible backup tool based on rsync and hardlinks.<br />
+          This Cockpit plugin enables the simple management of the most important settings, cron jobs, and backups.<br />
+          <a href="https://rsnapshot.org/" target="_blank" rel="noopener noreferrer">Project page</a>
         </div>
         <AlertGroup isToast>
           {alerts.map((alert, idx) => (
@@ -595,38 +595,38 @@ const App: React.FC = () => {
           ))}
         </AlertGroup>
         {rsnapshotAvailable === false && (
-          <Alert title="rsnapshot ist nicht installiert" variant="danger" isInline>
-            Das Programm <strong>rsnapshot</strong> ist auf diesem System nicht installiert.<br />
-            Installieren Sie es z.B. mit:<br />
+          <Alert title="rsnapshot is not installed" variant="danger" isInline>
+            The program <strong>rsnapshot</strong> is not installed on this system.<br />
+            Install it for example with:<br />
             <code>sudo apt install rsnapshot</code> (Debian/Ubuntu)<br />
             <code>sudo dnf install rsnapshot</code> (Fedora/RedHat)<br />
             <code>sudo zypper install rsnapshot</code> (openSUSE)
           </Alert>
         )}
         {sudoAvailable === false && (
-          <Alert title="Keine sudo-Rechte" variant="danger" isInline>
-            Sie haben keine sudo-Rechte oder Ihr Cockpit-Session-User darf keine Systemdateien ändern.<br />
-            Bitte führen Sie Cockpit als Administrator aus.
+          <Alert title="No sudo rights" variant="danger" isInline>
+            You have no sudo rights or your Cockpit session user is not allowed to modify system files.<br />
+            Please run Cockpit as an administrator.
           </Alert>
         )}
         <Stack hasGutter>
           <StackItem>
             <div className={`conf-header${successFlash ? " success-flash" : ""}`} style={{alignItems: "center"}}>
-              <strong>rsnapshot Konfiguration:</strong>
-              <Tooltip content="Konfiguration laden">
+              <strong>rsnapshot configuration:</strong>
+              <Tooltip content="Load configuration">
                 <Button
                   variant="plain"
-                  aria-label="Konfiguration laden"
+                  aria-label="Load configuration"
                   onClick={loadAll}
                   style={{marginLeft: "0.2em"}}
                 >
                   <SyncAltIcon />
                 </Button>
               </Tooltip>
-              <Tooltip content="Konfiguration speichern">
+              <Tooltip content="Save configuration">
                 <Button
                   variant="plain"
-                  aria-label="Konfiguration speichern"
+                  aria-label="Save configuration"
                   onClick={saveAll}
                   isDisabled={
                     Object.values(cronErrors).some(Boolean) ||
@@ -638,10 +638,10 @@ const App: React.FC = () => {
                   {isSavingConfig ? <Spinner size="sm" /> : <SaveIcon />}
                 </Button>
               </Tooltip>
-              <Tooltip content="Konfiguration testen (rsnapshot configtest)">
+              <Tooltip content="Test configuration (rsnapshot configtest)">
                 <Button
                   variant="plain"
-                  aria-label="Konfiguration testen"
+                  aria-label="Test configuration"
                   onClick={runConfigTest}
                   isDisabled={!rsnapshotAvailable || !sudoAvailable}
                   style={{marginLeft: "0.2em"}}
@@ -649,12 +649,12 @@ const App: React.FC = () => {
                   <CheckIcon />
                 </Button>
               </Tooltip>
-              {successFlash && <Badge style={{marginLeft: 8}} isRead>Gespeichert</Badge>}
+              {successFlash && <Badge style={{marginLeft: 8}} isRead>Saved</Badge>}
             </div>
             <Form>
               <FormGroup label="Snapshot Root" fieldId="snapshot_root">
                 <FormHelperText>
-                  Verzeichnis, in dem die Backups gespeichert werden. Muss ein lokaler Pfad sein (kein Remote-Pfad, aber z.B. ein gemountetes NFS-Laufwerk ist möglich).
+                  Directory where backups are stored. Must be a local path (no remote path, but for example a mounted NFS volume is possible).
                 </FormHelperText>
                 <TextInput
                   value={snapshotRoot}
@@ -669,44 +669,44 @@ const App: React.FC = () => {
                 )}
               </FormGroup>
 
-              <FormGroup label="Intervalle & Cronjobs" fieldId="intervals">
+              <FormGroup label="Intervals & Cron jobs" fieldId="intervals">
                 <FormHelperText>
-                  Definiert, wie viele Snapshots pro Intervall gehalten werden und wann sie laufen. Sie können Intervalle hinzufügen oder entfernen.
+                  Defines how many snapshots are kept per interval and when they run. You can add or remove intervals.
                 </FormHelperText>
-                <Table variant="compact" aria-label="Intervalle und Cronjobs">
+                <Table variant="compact" aria-label="Intervals and Cron jobs">
                   <Thead>
                     <Tr>
                       <Th>
-                        <Tooltip content="Name des Intervalls, z.B. hourly, daily, weekly, monthly.">
+                        <Tooltip content="Name of the interval, e.g. hourly, daily, weekly, monthly.">
                           <span>Name</span>
                         </Tooltip>
                       </Th>
                       <Th>
-                        <Tooltip content="Wie viele Backups dieses Intervalls sollen aufbewahrt werden?">
-                          <span>Anzahl</span>
+                        <Tooltip content="How many backups of this interval should be kept?">
+                          <span>Count</span>
                         </Tooltip>
                       </Th>
                       <Th>
                         <Tooltip content={
                           <span>
-                            Wann soll das Intervall laufen? <br />
-                            Cron-Syntax, z.B. <code>0 * * * *</code> (jede Stunde), <code>30 3 * * *</code> (täglich 3:30 Uhr), <code>@daily</code>
+                            When should the interval run? <br />
+                            Cron syntax, e.g. <code>0 * * * *</code> (every hour), <code>30 3 * * *</code> (daily at 3:30 AM), <code>@daily</code>
                           </span>
                         }>
-                          <span>Cron-Syntax</span>
+                          <span>Cron syntax</span>
                         </Tooltip>
                       </Th>
                       <Th>
                         <Tooltip content={
                           <span>
-                            Aktionen für dieses Intervall:<br />
-                            <b>Schalter:</b> Aktiv/Inaktiv<br />
-                            <b>Play:</b> Backup starten<br />
-                            <b>Dryrun:</b> Testlauf<br />
-                            <b>Mülleimer:</b> Intervall löschen
+                            Actions for this interval:<br />
+                            <b>Switch:</b> Active/Inactive<br />
+                            <b>Play:</b> Start backup<br />
+                            <b>Dry run:</b> Test run<br />
+                            <b>Trash:</b> Delete interval
                           </span>
                         }>
-                          <span>Aktionen</span>
+                          <span>Actions</span>
                         </Tooltip>
                       </Th>
                     </Tr>
@@ -725,7 +725,7 @@ const App: React.FC = () => {
                           <TextInput
                             value={row.count}
                             onChange={(_, v) => handleIntervalRow(row.id, "count", v)}
-                            aria-label="Anzahl"
+                            aria-label="Count"
                             validated={countErrors[row.id] ? "error" : "default"}
                           />
                           {countErrors[row.id] && (
@@ -744,7 +744,7 @@ const App: React.FC = () => {
                           />
                           {cronErrors[row.id] ? (
                             <FormHelperText className="pf-m-error" style={{ color: "#c9190b", marginTop: 4 }}>
-                              Ungültige Cron-Syntax. Beispiele siehe Tooltip
+                              Invalid cron syntax. See examples in tooltip
                             </FormHelperText>
                           ) : (
                             cronPreview[row.id] && (
@@ -753,47 +753,47 @@ const App: React.FC = () => {
                           )}
                         </Td>
                         <Td>
-                          <Tooltip content={row.active ? "Intervall deaktivieren" : "Intervall aktivieren"}>
+                          <Tooltip content={row.active ? "Disable interval" : "Enable interval"}>
                             <Switch
                               id={`interval-active-${row.id}`}
                               isChecked={row.active}
                               onChange={(_,checked) => handleIntervalRow(row.id, "active", checked)}
-                              aria-label="Aktiv"
+                              aria-label="Active"
                               style={{marginRight: 8, verticalAlign: "middle"}}
                             />
                           </Tooltip>
                           <Tooltip
                             content={playButtonStates[row.id]?.enabled
-                              ? "Backup für dieses Intervall starten"
-                              : playButtonStates[row.id]?.reason || "Dieses Intervall ist nicht korrekt gespeichert"}
+                              ? "Start backup for this interval"
+                              : playButtonStates[row.id]?.reason || "This interval is not correctly saved"}
                           >
                             <span>
                               <Button
                                 variant="plain"
-                                aria-label="Backup starten"
+                                aria-label="Start backup"
                                 isDisabled={!playButtonStates[row.id]?.enabled || !rsnapshotAvailable || !sudoAvailable}
                                 onClick={() => {
-                                  setOutput(prev => prev + `Starte rsnapshot-Backup (${row.name})...\n`);
+                                  setOutput(prev => prev + `Start rsnapshot backup for ${row.name}...\n`);
                                   cockpit.spawn(["rsnapshot", row.name], { superuser: "require", err: "message" })
                                     .stream(data => setOutput(prev => prev + data))
                                     .then(() => {
-                                      setOutput(prev => prev + "\nBackup abgeschlossen.\n");
+                                      setOutput(prev => prev + "\nBackup completed.\n");
                                       setAlerts(alerts => [
                                         ...alerts,
-                                        { title: `Backup gestartet (${row.name})`, variant: "success" },
-                                        { title: `Backup abgeschlossen (${row.name})`, variant: "success" }
+                                        { title: `Backup started for ${row.name}`, variant: "success" },
+                                        { title: `Backup completed for ${row.name}`, variant: "success" }
                                       ]);
                                     })
                                     .catch(error => {
                                       setOutput(prev =>
                                         prev +
-                                        "Fehler beim Backup: " +
+                                        "Error during backup: " +
                                         (error?.message || "") +
                                         (error?.problem ? "\n" + error.problem : "") +
                                         (error?.stderr ? "\n" + error.stderr : "") +
                                         "\n"
                                       );
-                                      setAlerts(alerts => [...alerts, { title: `Fehler beim Backup (${row.name}) – Details siehe Log unten`, variant: "danger" }]);
+                                      setAlerts(alerts => [...alerts, { title: `Error during backup for ${row.name} – Details see log below`, variant: "danger" }]);
                                     });
                                 }}
                               >
@@ -804,33 +804,33 @@ const App: React.FC = () => {
                           <Tooltip
                             content={
                               playButtonStates[row.id]?.enabled
-                                ? "Testlauf (dry-run): Zeigt, was rsnapshot für dieses Intervall tun würde (rsnapshot -t " + row.name + ")"
-                                : "Dryrun ist nur möglich, wenn das Intervall exakt gespeichert ist."
+                                ? "Dry-run (test): Shows what rsnapshot would do for this interval (rsnapshot -t " + row.name + ")"
+                                : "Dry-run is only possible if the interval is exactly saved."
                             }
                           >
                             <span>
                               <Button
                                 variant="plain"
-                                aria-label="Dryrun"
+                                aria-label="Dry-run"
                                 isDisabled={!playButtonStates[row.id]?.enabled || !rsnapshotAvailable || !sudoAvailable}
                                 onClick={() => {
-                                  setOutput(prev => prev + `Starte Testlauf (dry-run) für rsnapshot ${row.name}...\n`);
+                                  setOutput(prev => prev + `Start dry-run for rsnapshot ${row.name}...\n`);
                                   cockpit.spawn(["rsnapshot", "-t", row.name], { superuser: "require", err: "message" })
                                     .stream(data => setOutput(prev => prev + data))
                                     .then(() => {
-                                      setOutput(prev => prev + "\nTestlauf abgeschlossen.\n");
-                                      setAlerts(alerts => [...alerts, { title: `Testlauf erfolgreich (${row.name})`, variant: "success" }]);
+                                      setOutput(prev => prev + "\nDry-run completed.\n");
+                                      setAlerts(alerts => [...alerts, { title: `Dry-run successful for ${row.name}`, variant: "success" }]);
                                     })
                                     .catch(error => {
                                       setOutput(prev =>
                                         prev +
-                                        "Fehler beim Testlauf: " +
+                                        "Error during dry-run: " +
                                         (error?.message || "") +
                                         (error?.problem ? "\n" + error.problem : "") +
                                         (error?.stderr ? "\n" + error.stderr : "") +
                                         "\n"
                                       );
-                                      setAlerts(alerts => [...alerts, { title: `Fehler beim Testlauf (${row.name}) – Details siehe Log unten`, variant: "danger" }]);
+                                      setAlerts(alerts => [...alerts, { title: `Error during dry-run for ${row.name} – Details see log below`, variant: "danger" }]);
                                     });
                                 }}
                               >
@@ -838,11 +838,11 @@ const App: React.FC = () => {
                               </Button>
                             </span>
                           </Tooltip>
-                          <Tooltip content="Intervall entfernen">
+                          <Tooltip content="Remove interval">
                             <span>
                               <Button
                                 variant="plain"
-                                aria-label="Intervall entfernen"
+                                aria-label="Remove interval"
                                 isDisabled={intervalRows.length <= 1}
                                 onClick={() => removeInterval(row.id)}
                               >
@@ -857,28 +857,28 @@ const App: React.FC = () => {
                 </Table>
 
 
-                <Button variant="link" icon={<PlusIcon />} onClick={addInterval}>Intervall hinzufügen</Button>
+                <Button variant="link" icon={<PlusIcon />} onClick={addInterval}>Add interval</Button>
               </FormGroup>
-              <FormGroup label="Backup-Jobs" fieldId="backups">
+              <FormGroup label="Backup Jobs" fieldId="backups">
                 <FormHelperText>
-                  Definiert, welche Verzeichnisse gesichert werden. 
+                  Defines which directories should be backed up.
                 </FormHelperText>
-                <Table variant="compact" aria-label="Backup-Jobs">
+                <Table variant="compact" aria-label="Backup Jobs">
                   <Thead>
                     <Tr>
                       <Th>
-                        <Tooltip content="Das Quellverzeichnis, das gesichert werden soll.">
-                          <span>Quelle</span>
+                        <Tooltip content="The source directory to be backed up.">
+                          <span>Source</span>
                         </Tooltip>
                       </Th>
                       <Th>
-                        <Tooltip content="Das Ziel (meist 'localhost/' oder ein anderer Host).">
-                          <span>Ziel</span>
+                        <Tooltip content="The destination (usually 'localhost/' or another host).">
+                          <span>Destination</span>
                         </Tooltip>
                       </Th>
                       <Th>
-                        <Tooltip content="Optionale rsync-Optionen, z.B. --exclude oder --link-dest.">
-                          <span>Optionen</span>
+                        <Tooltip content="Optional rsync options, e.g. --exclude or --link-dest.">
+                          <span>Options</span>
                         </Tooltip>
                       </Th>
                       <Th></Th>
@@ -897,7 +897,7 @@ const App: React.FC = () => {
                           <TextInput value={b.options} onChange={(_, v) => handleBackup(idx, "options", v)} placeholder="z.B. --exclude=tmp/" />
                         </Td>
                         <Td>
-                          <Button variant="plain" aria-label="Backup entfernen" onClick={() => removeBackup(idx)}>✕</Button>
+                          <Button variant="plain" aria-label="Remove backup" onClick={() => removeBackup(idx)}>✕</Button>
                         </Td>
                       </Tr>
                     ))}
@@ -905,34 +905,34 @@ const App: React.FC = () => {
                 </Table>
                 <Button variant="link" onClick={addBackup}>Backup hinzufügen</Button>
               </FormGroup>
-              <FormGroup label="Weitere Optionen (Rohtext)" fieldId="rest">
+              <FormGroup label="Additional Options (Raw Text)" fieldId="rest">
                 <FormHelperText>
-                  Weitere Konfigurationszeilen, die nicht direkt unterstützt werden.
+                  Additional configuration lines that are not directly supported.
                 </FormHelperText>
                 <TextArea
                   ref={restRef}
                   value={rest.join("\n")}
                   onChange={(_, v) => setRest(v.split("\n"))}
                   style={{ minHeight: "100px", fontFamily: "monospace" }}
-                  aria-label="Weitere Optionen Rohtext"
+                  aria-label="Additional Options Raw Text"
                   onKeyDown={handleRestTab}
                 />
               </FormGroup>
             </Form>
           </StackItem>
           <StackItem>
-            <ExpandableSection toggleText="Manuelle Bearbeitung" isIndented>
+            <ExpandableSection toggleText="Manual Editing" isIndented>
               <Stack hasGutter>
                 <StackItem>
                   <div className="conf-header">
-                    <strong>rsnapshot.conf (Rohtext):</strong>
-                    <Tooltip content="Neu laden">
+                    <strong>rsnapshot.conf (Raw Text):</strong>
+                    <Tooltip content="Reload">
                       <SyncAltIcon className="conf-reload" onClick={loadAll} />
                     </Tooltip>
-                    <Tooltip content="Speichern">
+                    <Tooltip content="Save">
                       <Button
                         variant="plain"
-                        aria-label="rsnapshot.conf speichern"
+                        aria-label="rsnapshot.conf save"
                         onClick={saveRawConf}
                         isDisabled={isSavingRawConf}
                         style={{marginLeft: "0.2em"}}
@@ -946,7 +946,7 @@ const App: React.FC = () => {
                     value={rawConf}
                     onChange={(_, v) => setRawConf(v)}
                     style={{ minHeight: "200px", fontFamily: "monospace" }}
-                    aria-label="rsnapshot.conf Rohtext"
+                    aria-label="rsnapshot.conf Raw Text"
                     onKeyDown={e => {
                       if (e.key === "Tab") {
                         e.preventDefault();
@@ -967,14 +967,14 @@ const App: React.FC = () => {
                 </StackItem>
                 <StackItem>
                   <div className="conf-header">
-                    <strong>/etc/cron.d/rsnapshot (Rohtext):</strong>
-                    <Tooltip content="Neu laden">
+                    <strong>/etc/cron.d/rsnapshot (Raw Text):</strong>
+                    <Tooltip content="Reload">
                       <SyncAltIcon className="conf-reload" onClick={loadAll} />
                     </Tooltip>
-                    <Tooltip content="Speichern">
+                    <Tooltip content="Save">
                       <Button
                         variant="plain"
-                        aria-label="cron.d speichern"
+                        aria-label="cron.d save"
                         onClick={saveRawCron}
                         isDisabled={isSavingRawCron}
                         style={{marginLeft: "0.2em"}}
@@ -987,14 +987,14 @@ const App: React.FC = () => {
                     value={rawCron}
                     onChange={(_, v) => setRawCron(v)}
                     style={{ minHeight: "150px", fontFamily: "monospace" }}
-                    aria-label="cron.d/rsnapshot Rohtext"
+                    aria-label="cron.d/rsnapshot Raw Text"
                   />
                 </StackItem>
               </Stack>
                   
               {manualConfWarn.length > 0 && (
                 <Alert
-                  title="Achtung: Cronjobs und rsnapshot-Konfiguration passen nicht zusammen"
+                  title="Warning: Cron jobs and rsnapshot configuration do not match"
                   variant="warning"
                   isInline
                   style={{marginTop: "1em"}}
@@ -1010,7 +1010,7 @@ const App: React.FC = () => {
             </ExpandableSection>
           </StackItem>
           <StackItem>
-            <strong>Ausgabe / Log:</strong>
+            <strong>Output / Log:</strong>
             <pre style={{padding: "1em", border: "1px solid #ccc", minHeight: "100px"}}>{output}</pre>
           </StackItem>
         </Stack>
