@@ -5,7 +5,7 @@ import { CronExpressionParser } from "cron-parser";
 import cockpit from "cockpit";
 import {
   Page, PageSection, Title, Button, TextArea, Alert, AlertGroup, Stack, StackItem,
-  Form, FormGroup, TextInput, Tooltip, Spinner, Switch, FormHelperText, Badge
+  Form, FormGroup, TextInput, Tooltip, Spinner, Switch, FormHelperText, Badge, Card
 } from "@patternfly/react-core";
 import {
   Table, Thead, Tbody, Tr, Th, Td
@@ -582,7 +582,7 @@ const App: React.FC = () => {
   return (
     <Page>
       <PageSection>
-        <Title headingLevel="h1" size="lg">rsnapshot Management</Title>
+        <Title headingLevel="h1" >rsnapshot Management</Title>
         <div style={{marginBottom: 8, color: "#555", fontSize: "1em"}}>
           <strong>rsnapshot</strong> is a flexible backup tool based on rsync and hardlinks.<br />
           This Cockpit plugin enables the simple management of the most important settings, cron jobs, and backups.<br />
@@ -608,8 +608,8 @@ const App: React.FC = () => {
             Please run Cockpit as an administrator.
           </Alert>
         )}
-        <Stack hasGutter>
-          <StackItem>
+        
+          <Card className='stack-item-box'>
             <div className={`conf-header${successFlash ? " success-flash" : ""}`} style={{alignItems: "center"}}>
               <strong>rsnapshot configuration:</strong>
               <Tooltip content="Load configuration">
@@ -651,7 +651,7 @@ const App: React.FC = () => {
               {successFlash && <Badge style={{marginLeft: 8}} isRead>Saved</Badge>}
             </div>
             <Form>
-              <FormGroup label="Snapshot Root" fieldId="snapshot_root">
+              <FormGroup label="Snapshot Root" fieldId="snapshot_root" >
                 <FormHelperText>
                   Directory where backups are stored. Must be a local path (no remote path, but for example a mounted NFS volume is possible).
                 </FormHelperText>
@@ -918,9 +918,9 @@ const App: React.FC = () => {
                 />
               </FormGroup>
             </Form>
-          </StackItem>
-          <StackItem>
-            <ExpandableSection toggleText="Manual Editing" isIndented>
+          </Card>
+          <Card className='stack-item-box'>
+            <ExpandableSection  toggleText="Manual Editing" isIndented className="expandable-section-large">
               <Stack hasGutter>
                 <StackItem>
                   <div className="conf-header">
@@ -1007,12 +1007,12 @@ const App: React.FC = () => {
                 </Alert>
               )}
             </ExpandableSection>
-          </StackItem>
-          <StackItem>
+          </Card>
+          <Card className='stack-item-box'>
             <strong>Output / Log:</strong>
             <pre style={{padding: "1em", border: "1px solid #ccc", minHeight: "100px"}}>{output}</pre>
-          </StackItem>
-        </Stack>
+          </Card>
+        
       </PageSection>
     </Page>
   );

@@ -44,3 +44,25 @@ body {
     grid-template-columns: 1fr;
   }
 }
+.pf-v6-c-form__label {
+  font-size: 20px !important;
+  font-weight: 800;
+}
+
+.pf-v6-l-stack__item:not(:last-child) {
+  border-bottom: 1px solid var(--pf-global--BorderColor--100);
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+}
+
+.stack-item-box {
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+
+.pf-v6-c-expandable-section__toggle {
+  font-size: 1.5rem !important;
+  font-weight: 600;
+}
+
